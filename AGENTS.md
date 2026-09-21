@@ -187,3 +187,14 @@ This repository publishes the shared contract under `spec/` and states it in
 `docs/contract.md`: the wire schemas, the policy vectors, and the interface shape. A change
 here that touches the contract is announced to every other SDK repository with the commit
 that regenerated `spec/`.
+
+The SDKs, so the announcement has addresses:
+
+| Language | Repository |
+|---|---|
+| Rust | this repository |
+| Python | [`pedro-pscunha/guideme-python`](https://github.com/pedro-pscunha/guideme-python) |
+
+That repository vendors `spec/` and records the commit it came from in its `spec/SOURCE`; a
+job there fails when its copy drifts from this repository's `main`. So a contract change
+lands here first, and the drift job is what tells the other SDK to catch up.
