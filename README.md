@@ -210,6 +210,23 @@ Retries on 429 and 529 use exponential backoff with jitter, capped at 30 s, and 
   `spec/` holds its JSON Schemas and 42 golden vectors; `docs/contract.md` states what every
   guideme SDK must satisfy. `docs/design.md` records the design and its sharp edges.
 
+## Other SDKs
+
+Every guideme SDK is written from scratch in its own language and answers the same way,
+because they all satisfy the contract this repository publishes under `spec/` and states in
+[`docs/contract.md`](docs/contract.md): the wire schemas, the 42 golden policy vectors, and
+the interface shape.
+
+| Language | Package | Repository |
+|---|---|---|
+| Rust | [`guideme`](https://crates.io/crates/guideme) | this repository |
+| Python | `guideme` | [guideme-python](https://github.com/pedro-pscunha/guideme-python) |
+
+The Python SDK mirrors the verbs in Python's idiom: `Choice` and `Levels` are `enum.Enum`
+bases whose members carry the rubric, `.or(value)` is `.otherwise(value)` because `or` is a
+keyword, and `Guide` and `AsyncGuide` share one surface. It emits the same span, event and
+attribute names, so one dashboard reads both.
+
 ## Environment
 
 | Variable | Meaning |
