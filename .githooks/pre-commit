@@ -18,7 +18,7 @@ dir="$(cd -- "$(dirname -- "$0")" && pwd)"
 
 status=0
 scan_for_secrets git --staged || status=$?
-refuse_on_secrets "$status" "the staged change" "gitleaks git --staged -v" || exit 1
+refuse_on_secrets "$status" "staged change" "gitleaks git --staged -v" || exit 1
 
 mise="$(resolve_mise)" || exit 1
 "$mise" run fmt-check
