@@ -149,6 +149,13 @@ events. A batch is atomic: one answer that cannot be resolved fails the whole ca
 
 ## Observability
 
+guideme emits `tracing` spans and events and installs nothing: no subscriber, no file, no
+exporter. Add a subscriber and it appears. The smallest one:
+
+```rust
+tracing_subscriber::fmt().with_env_filter("warn,guideme=info").init();
+```
+
 One `tracing` span named `guideme.ask` per request, shaped by the OpenTelemetry GenAI
 conventions: `gen_ai.request.model`, `gen_ai.response.model`, `gen_ai.usage.*`, and on
 failure `error.type` with an error status. Under it, one HTTP client span per attempt with

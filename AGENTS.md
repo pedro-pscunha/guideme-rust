@@ -27,8 +27,13 @@ The live TypeSafe docs are the source of truth for the wire contract:
 | `guideme-derive/src/lib.rs` | the two derives | every misuse is a compile error with a message naming the rule |
 
 `docs/design.md` records the decisions and the sharp edges. Update it when a decision changes.
-`docs/observability.md` records the span and event fields; a change to either must land there
-in the same commit.
+
+Telemetry is `tracing` only; the crate installs no subscriber. The shape: one `guideme.ask`
+span per `Guide::ask` (target `guideme`), one HTTP client span per attempt beneath it
+(`POST /v1/systemone`, target `guideme::api`) with a `guideme.retry` warning when throttled,
+and one `guideme.answer` event per question. `docs/observability.md` records every field; a
+change to any of them must land there in the same commit, and the names are part of the
+cross-SDK contract (see below).
 
 `examples/` holds runnable programs. Each is its own workspace root with its own lock file, so
 the gate does not build them and their dependencies stay out of the library's tree. Build one
@@ -115,6 +120,10 @@ Run everything from the repo root. Capture long output to a file; do not pipe a 
 4. `mise run spec`, commit the regenerated `spec/`.
 5. `mise run check`.
 6. Note it in `CHANGELOG.md` and open an issue in each other SDK repository citing the new spec commit.
+
+Renaming, adding or removing a span or event field is also a contract change: it goes through
+`docs/observability.md`, `docs/contract.md` and `CHANGELOG.md`, and is announced the same way.
+`spec/` is unaffected.
 
 ## Other SDKs
 
