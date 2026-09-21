@@ -1,0 +1,41 @@
+[tools]
+"aqua:evilmartians/lefthook" = "2.1.9"
+"aqua:nextest-rs/nextest/cargo-nextest" = "0.9.137"
+"aqua:EmbarkStudios/cargo-deny" = "0.20.2"
+
+[tasks.fmt]
+description = "Format the workspace"
+run = "cargo fmt --all"
+
+[tasks.fmt-check]
+description = "Fail if anything is unformatted"
+run = "cargo fmt --all --check"
+
+[tasks.lint]
+description = "Clippy, all targets, warnings are errors"
+run = "cargo clippy --workspace --all-targets --all-features --locked -- -D warnings"
+
+[tasks.test]
+description = "nextest + doctests"
+run = ["cargo nextest run --workspace --locked --no-tests=warn", "cargo test --workspace --doc --locked"]
+
+[tasks.doc]
+description = "rustdoc with warnings as errors"
+env = { RUSTDOCFLAGS = "-D warnings" }
+run = "cargo doc --workspace --no-deps --locked"
+
+[tasks.deny]
+description = "Advisories, licenses, bans, sources"
+run = "cargo deny check"
+
+[tasks.spec]
+description = "Regenerate spec/ (schemas + golden vectors)"
+run = "cargo run -p guideme --bin guideme-spec --locked"
+
+[tasks.check]
+description = "The full gate, in order"
+run = ["mise run fmt-check", "mise run lint", "mise run test", "mise run doc", "mise run deny"]
+
+[tasks.hooks]
+description = "Install git hooks"
+run = "sh scripts/install-hooks.sh"

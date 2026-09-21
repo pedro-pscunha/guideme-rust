@@ -1,0 +1,46 @@
+[workspace]
+resolver = "3"
+members = ["guideme", "guideme-derive"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98"
+publish = false
+repository = "https://github.com/pedro-pscunha/guideme"
+
+[workspace.dependencies]
+guideme-derive = { path = "guideme-derive", version = "0.1.0" }
+tokio = { version = "1.53", features = ["rt", "time", "macros"] }
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "json", "http2", "charset"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2.0"
+tracing = "0.1"
+schemars = { version = "1.2", features = ["derive"] }
+syn = { version = "3.0", features = ["full"] }
+quote = "1.0"
+proc-macro2 = "1.0"
+heck = "0.5"
+proptest = "1.11"
+wiremock = "0.6"
+tracing-subscriber = { version = "0.3", features = ["registry"] }
+trybuild = "1.0"
+
+[workspace.lints.rust]
+missing_docs = "deny"
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+dbg_macro = "deny"
+todo = "deny"
+unimplemented = "deny"
+missing_errors_doc = "allow"
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+doc_markdown = "allow"

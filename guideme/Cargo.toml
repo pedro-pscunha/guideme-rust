@@ -1,0 +1,32 @@
+[package]
+name = "guideme"
+description = "Type-safe inline judgments from TypeSafe Jev: if / match / score as Rust primitives"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "guideme-spec"
+path = "src/bin/spec.rs"
+
+[dependencies]
+guideme-derive.workspace = true
+tokio.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+schemars.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+wiremock.workspace = true
+tracing-subscriber.workspace = true
+trybuild.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread"] }
+
+[lints]
+workspace = true
