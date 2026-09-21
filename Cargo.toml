@@ -6,8 +6,10 @@ members = ["guideme", "guideme-derive"]
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.98"
-publish = false
+license = "MIT OR Apache-2.0"
 repository = "https://github.com/pedro-pscunha/guideme-rust"
+keywords = ["typesafe", "llm", "ai", "judgment", "tracing"]
+categories = ["api-bindings", "asynchronous"]
 
 [workspace.dependencies]
 guideme-derive = { path = "guideme-derive", version = "0.1.0" }

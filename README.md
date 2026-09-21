@@ -56,11 +56,16 @@ The doc comment on each variant is the rubric the model reads. The variant name 
 
 ## Install
 
-The crate is private and unpublished. Depend on it by git:
+```sh
+cargo add guideme
+cargo add tokio --features rt-multi-thread,macros
+```
+
+or in `Cargo.toml`:
 
 ```toml
 [dependencies]
-guideme = { git = "https://github.com/pedro-pscunha/guideme-rust" }
+guideme = "0.1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 ```
 
@@ -230,3 +235,7 @@ TYPESAFE_API_KEY=… cargo nextest run -p guideme --test live --run-ignored igno
 ```
 
 Contributor rules live in `AGENTS.md`.
+
+## License
+
+MIT or Apache-2.0, at your option.

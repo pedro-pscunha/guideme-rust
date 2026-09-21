@@ -4,8 +4,11 @@ description = "Type-safe inline judgments from TypeSafe Jev: if / match / score 
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-publish.workspace = true
+license.workspace = true
 repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+readme = "../README.md"
 
 [[bin]]
 name = "guideme-spec"
