@@ -36,6 +36,9 @@ impl Visit for Collect<'_> {
     fn record_u64(&mut self, field: &Field, value: u64) {
         self.0.insert(field.name().to_owned(), value.to_string());
     }
+    fn record_i64(&mut self, field: &Field, value: i64) {
+        self.0.insert(field.name().to_owned(), value.to_string());
+    }
     fn record_str(&mut self, field: &Field, value: &str) {
         self.0.insert(field.name().to_owned(), value.to_owned());
     }

@@ -104,14 +104,17 @@ impl Guide {
             "guideme.ask",
             model.requested = self.inner.model.as_str(),
             model.answered = field::Empty,
-            questions = plan.questions.len(),
-            state.bytes = state_json.len(),
+            questions = signed(plan.questions.len()),
+            state.bytes = signed(state_json.len()),
             state = field::Empty,
             usage.input_tokens = field::Empty,
             usage.output_tokens = field::Empty,
             retries = field::Empty,
             elapsed_ms = field::Empty,
             error = field::Empty,
+            // Read by tracing-opentelemetry to set the exported span's status; harmless to
+            // any other subscriber, and only ever recorded on failure.
+            otel.status_code = field::Empty,
         );
         if self.inner.record_state {
             span.record("state", state_json.as_str());
@@ -128,21 +131,18 @@ impl Guide {
             .evaluate_counted(&request)
             .instrument(span.clone())
             .await;
-        span.record(
-            "elapsed_ms",
-            u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
-        );
+        span.record("elapsed_ms", signed(started.elapsed().as_millis()));
         let (response, retries) = match result {
             Ok(ok) => ok,
             Err(e) => {
-                span.record("error", field::display(&e));
+                fail(&span, &e);
                 return Err(e);
             }
         };
         span.record("model.answered", response.model.as_str());
-        span.record("usage.input_tokens", response.usage.input_tokens);
-        span.record("usage.output_tokens", response.usage.output_tokens);
-        span.record("retries", retries);
+        span.record("usage.input_tokens", signed(response.usage.input_tokens));
+        span.record("usage.output_tokens", signed(response.usage.output_tokens));
+        span.record("retries", signed(retries));
 
         let _entered = span.enter();
         let decoded = (|| {
@@ -158,7 +158,7 @@ impl Guide {
             A::decode(claim, &Reply { outcomes })
         })();
         if let Err(e) = &decoded {
-            span.record("error", field::display(e));
+            fail(&span, e);
         }
         decoded
     }
@@ -167,6 +167,19 @@ impl Guide {
     pub async fn models(&self) -> Result<Vec<ModelInfo>, Error> {
         self.inner.client.models().await
     }
+}
+
+/// Marks the ask span as failed, in this crate's vocabulary and OpenTelemetry's.
+fn fail(span: &tracing::Span, error: &Error) {
+    span.record("error", field::display(error));
+    span.record("otel.status_code", "ERROR");
+}
+
+/// OpenTelemetry attributes are signed, and `tracing-opentelemetry` has no `u64` path: an
+/// unsigned field is exported as a string. Clamping into `i64` keeps these numbers numeric
+/// for whatever consumes the trace.
+fn signed(n: impl TryInto<i64>) -> i64 {
+    n.try_into().unwrap_or(i64::MAX)
 }
 
 fn emit(id: &QuestionId, outcome: &Outcome, t: Thresholds) {
@@ -218,7 +231,7 @@ fn emit(id: &QuestionId, outcome: &Outcome, t: Thresholds) {
                 name: "guideme.answer",
                 question = id.as_str(),
                 kind = "score",
-                outcome = *index,
+                outcome = signed(*index),
                 value = *value,
                 confidence = confidence.get(),
                 unsure = *unsure,

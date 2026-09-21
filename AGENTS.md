@@ -27,6 +27,12 @@ The live TypeSafe docs are the source of truth for the wire contract:
 | `guideme-derive/src/lib.rs` | the two derives | every misuse is a compile error with a message naming the rule |
 
 `docs/design.md` records the decisions and the sharp edges. Update it when a decision changes.
+`docs/observability.md` records the span and event fields; a change to either must land there
+in the same commit.
+
+`examples/` holds runnable programs. Each is its own workspace root with its own lock file, so
+the gate does not build them and their dependencies stay out of the library's tree. Build one
+by running cargo inside its directory.
 
 ## Invariants
 

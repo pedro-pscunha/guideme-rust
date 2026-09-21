@@ -153,8 +153,10 @@ One `tracing` span named `guideme.ask` per request, with the model requested and
 question count, token usage, retries, elapsed time, and an `error` field when the ask failed.
 One `guideme.answer` event per question with the outcome, the probability or confidence, the
 unsure verdict and the settled thresholds that produced it. The state is never recorded unless
-you opt in with `record_state(true)`. The API key never appears anywhere. Field tables are in
-`docs/observability.md`. Bridge to OpenTelemetry with `tracing-opentelemetry`.
+you opt in with `record_state(true)`. The API key never appears anywhere.
+
+`docs/observability.md` has the field tables, the `RUST_LOG` targets, and a console and OTLP
+setup. `examples/otlp` is a runnable version of both against the live API.
 
 ## Errors
 
