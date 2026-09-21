@@ -57,17 +57,18 @@ scan_for_secrets() {
 }
 
 # Turn a scan_for_secrets status into a message and a refusal. $1 is the status,
-# $2 names what was scanned, $3 is the command to inspect it with.
+# $2 is a bare noun phrase for what was scanned ("staged change", "push to
+# refs/heads/main"), $3 is the command to inspect it with, or empty.
 refuse_on_secrets() {
 	local status="$1" scanned="$2" inspect="$3"
 	case "$status" in
 	0) return 0 ;;
 	2)
-		echo "gitleaks: potential secret in $scanned — blocked." >&2
-		echo "  Inspect with: $inspect" >&2
+		echo "gitleaks: potential secret in the $scanned — blocked." >&2
+		[ -n "$inspect" ] && echo "  Inspect with: $inspect" >&2
 		;;
 	*)
-		echo "gitleaks did not run (exit $status) — blocked, because an unscanned $scanned is not a clean one." >&2
+		echo "gitleaks did not run (exit $status), so the $scanned is unscanned — blocked; unscanned is not clean." >&2
 		;;
 	esac
 	return 1
