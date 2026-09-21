@@ -3053,3 +3053,21 @@ Expected: `PRIVATE`, `main`, matching SHAs. If the pre-push hook's `mise run che
 - **Spec coverage:** wire (T3), retry (T4), policy laws (T5), derives + trybuild (T6), question kinds incl. `criteria`, `.with`, `.or`, `.detail`, runtime rubrics (T7), shapes/batch/atomicity/ids/one span/events/record_state/redaction (T8), spec + drift + porting (T9), live test, docs, changelog (T10), hooks (T1), invariants + private push (T11). Goal criterion "batch honours per-question override" → T8 test asserts `Department::Sales` from `.or` under `min_confidence(0.6)` with confidence 0.4.
 - **Type consistency:** `Kind::read(&self, id, outcome, t, or)` and `Fallible::read_detail(&self, id, outcome, t)` are the canonical signatures (the first Noul snippet predates the note and must use them). `Levels` names both the trait and the derive; `Options` is the choice trait. `Guide::ask(ask, state)` question-first everywhere.
 - **Placeholders:** none; the two "note" corrections in T2 (`State` repr) and T7 (thresholds in `read`) are explicit code, not TBDs.
+
+---
+
+## Amendments after the plan gate (2026-09-20)
+
+The fable review (`docs/superpowers/reviews/2026-09-20-plan-review.md`) found 0 Critical / 5 Major / 16 Minor. Every accepted item below overrides the task text above; the code in the repository is the authoritative form.
+
+1. Lints: `return_self_not_must_use = "allow"` in the workspace; test files allow `clippy::pedantic`; no `as` casts in `src/` (use `try_from`/`from`).
+2. `Choose::read_detail` checks every key against `self.rubric` before `Options::from_key`; `Choose::wire` rejects duplicate runtime keys.
+3. `Client`: 200 bodies decode with `serde_json::from_str` → `Error::Protocol`; `retry-after` clamped to 30 s; a `pub(crate) evaluate_counted` returns `(Response, retries)` and `Guide` records `retries`.
+4. `Thresholds` has private fields, `Thresholds::new(yes_above, no_below, min_confidence) -> Result`, getters, `#[serde(try_from = "ThresholdsRepr")]`; `Policy::settle` delegates to it; `resolve` enforces `2..=10` levels.
+5. `Outcome::Score.ranked` → `distribution`; `Scored.probabilities` → `distribution`. Event `guideme.answer` fields: `question`, `kind`, `outcome`, `probability` (noul), `confidence` (choice/score), `value` (score), `unsure`, `yes_above`, `no_below`, `min_confidence`.
+6. `Question<K>` gains `yes_above`, `no_below`, `min_confidence` one-liners over `.with`.
+7. `Error::Unsure.threshold` for noul is the nearer band boundary.
+8. `spec::render() -> Result<..>`; grid from `const` tables; `tests/spec.rs` asserts the vector count; negative vectors carry `"error": "protocol"`; `Probability`/`Confidence` schemas carry `minimum: 0, maximum: 1`.
+9. Tests: `redaction.rs` lands with the Guide (Task 8); `batch.rs` gains the unsure-ladder test and the out-of-rubric Protocol test; `policy.rs` gains thresholds monotonicity; derive round-trips are plain loops; the final task proves an unformatted commit is rejected.
+10. Order: question kinds (old Task 7) before derives (old Task 6). `syn` without `full`.
+11. Kept as designed, documented instead: `Key`/`Rank` only via `choose_among`/`score_levels`; `guideme::Question` vs `api::Question` named in `docs/design.md`.

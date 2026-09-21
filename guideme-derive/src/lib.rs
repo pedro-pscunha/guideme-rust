@@ -1,1 +1,221 @@
-//! Derive macros for `guideme`.
+//! `#[derive(Choice)]` and `#[derive(Levels)]` for `guideme`.
+//!
+//! Both work on enums whose variants are all unit variants. A variant's `///` doc comment is
+//! its rubric; `#[guide(rubric = "…")]` overrides it. `Choice` keys default to the variant
+//! name in `snake_case`; `#[guide(key = "…")]` overrides. At most one `#[guide(fallback)]`.
+
+use heck::ToSnakeCase;
+use proc_macro::TokenStream;
+use proc_macro2::Span;
+use quote::quote;
+use syn::{Data, DeriveInput, Error, Fields, Ident, LitStr, Meta, Result, parse_macro_input};
+
+/// One enum variant with its wire key, rubric and fallback flag resolved.
+struct Variant {
+    ident: Ident,
+    key: String,
+    rubric: Option<String>,
+    fallback: bool,
+}
+
+/// Derive `guideme::Options` for a unit-variant enum.
+#[proc_macro_derive(Choice, attributes(guide))]
+pub fn derive_choice(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+    expand_choice(&input)
+        .unwrap_or_else(|error| error.to_compile_error())
+        .into()
+}
+
+/// Derive `guideme::Levels` for a unit-variant enum.
+#[proc_macro_derive(Levels, attributes(guide))]
+pub fn derive_levels(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+    expand_levels(&input)
+        .unwrap_or_else(|error| error.to_compile_error())
+        .into()
+}
+
+/// Read the enum's variants, applying `#[guide(..)]` overrides to key, rubric and fallback.
+fn variants(input: &DeriveInput, derive: &str) -> Result<Vec<Variant>> {
+    let Data::Enum(data) = &input.data else {
+        return Err(Error::new(
+            Span::call_site(),
+            format!("guideme: #[derive({derive})] only supports enums"),
+        ));
+    };
+    let mut out = Vec::with_capacity(data.variants.len());
+    for v in &data.variants {
+        if !matches!(v.fields, Fields::Unit) {
+            return Err(Error::new_spanned(
+                v,
+                format!(
+                    "guideme: #[derive({derive})] needs unit variants; `{}` has fields",
+                    v.ident
+                ),
+            ));
+        }
+        let mut key = v.ident.to_string().to_snake_case();
+        let mut rubric = doc_comment(&v.attrs);
+        let mut fallback = false;
+        for attr in v.attrs.iter().filter(|a| a.path().is_ident("guide")) {
+            attr.parse_nested_meta(|meta| {
+                if meta.path.is_ident("key") {
+                    key = meta.value()?.parse::<LitStr>()?.value();
+                } else if meta.path.is_ident("rubric") {
+                    rubric = Some(meta.value()?.parse::<LitStr>()?.value());
+                } else if meta.path.is_ident("fallback") {
+                    fallback = true;
+                } else {
+                    return Err(meta.error(
+                        "guideme: unknown #[guide(..)] option; expected key, rubric, or fallback",
+                    ));
+                }
+                Ok(())
+            })?;
+        }
+        out.push(Variant {
+            ident: v.ident.clone(),
+            key,
+            rubric,
+            fallback,
+        });
+    }
+    if out.len() < 2 {
+        return Err(Error::new_spanned(
+            &input.ident,
+            format!("guideme: #[derive({derive})] needs at least two variants"),
+        ));
+    }
+    Ok(out)
+}
+
+/// Join a variant's `///` lines into one rubric string.
+fn doc_comment(attrs: &[syn::Attribute]) -> Option<String> {
+    let lines: Vec<String> = attrs
+        .iter()
+        .filter(|a| a.path().is_ident("doc"))
+        .filter_map(|a| {
+            if let Meta::NameValue(nv) = &a.meta
+                && let syn::Expr::Lit(expr) = &nv.value
+                && let syn::Lit::Str(text) = &expr.lit
+            {
+                Some(text.value().trim().to_owned())
+            } else {
+                None
+            }
+        })
+        .collect();
+    if lines.is_empty() {
+        None
+    } else {
+        Some(lines.join(" "))
+    }
+}
+
+/// Build the `::guideme::Options` impl.
+fn expand_choice(input: &DeriveInput) -> Result<proc_macro2::TokenStream> {
+    let vs = variants(input, "Choice")?;
+    if vs.len() > 255 {
+        return Err(Error::new_spanned(
+            &input.ident,
+            "guideme: a Choice may have at most 255 options",
+        ));
+    }
+    for (i, a) in vs.iter().enumerate() {
+        if let Some(first) = vs[..i].iter().find(|b| b.key == a.key) {
+            return Err(Error::new_spanned(
+                &a.ident,
+                format!(
+                    "guideme: duplicate key {:?} (also on `{}`)",
+                    a.key, first.ident
+                ),
+            ));
+        }
+    }
+    let fallbacks: Vec<&Variant> = vs.iter().filter(|v| v.fallback).collect();
+    if let Some(second) = fallbacks.get(1) {
+        return Err(Error::new_spanned(
+            &second.ident,
+            "guideme: only one variant may be #[guide(fallback)]",
+        ));
+    }
+    let name = &input.ident;
+    let idents = vs.iter().map(|v| &v.ident);
+    let keys = vs.iter().map(|v| &v.key);
+    let rubrics = vs.iter().map(|v| {
+        if let Some(r) = &v.rubric {
+            quote!(Some(#r))
+        } else {
+            quote!(None)
+        }
+    });
+    let fallback = if let Some(v) = fallbacks.first() {
+        let ident = &v.ident;
+        quote!(Some(Self::#ident))
+    } else {
+        quote!(None)
+    };
+    Ok(quote! {
+        impl ::guideme::Options for #name {
+            const RUBRIC: &'static [(&'static str, Option<&'static str>)] = &[#((#keys, #rubrics)),*];
+            fn from_key(key: &str) -> Option<Self> {
+                const VARIANTS: &[#name] = &[#(#name::#idents),*];
+                Self::RUBRIC
+                    .iter()
+                    .position(|(k, _)| *k == key)
+                    .and_then(|i| VARIANTS.get(i).cloned())
+            }
+            fn fallback() -> Option<Self> {
+                #fallback
+            }
+        }
+    })
+}
+
+/// Build the `::guideme::Levels` impl.
+fn expand_levels(input: &DeriveInput) -> Result<proc_macro2::TokenStream> {
+    let vs = variants(input, "Levels")?;
+    if vs.len() > 10 {
+        return Err(Error::new_spanned(
+            &input.ident,
+            "guideme: a Score may have at most 10 levels",
+        ));
+    }
+    if let Some(v) = vs.iter().find(|v| v.fallback) {
+        return Err(Error::new_spanned(
+            &v.ident,
+            "guideme: #[guide(fallback)] is not allowed on Levels; use `.or(level)` at the call site",
+        ));
+    }
+    let mut levels = Vec::with_capacity(vs.len());
+    for v in &vs {
+        let Some(rubric) = &v.rubric else {
+            return Err(Error::new_spanned(
+                &v.ident,
+                format!(
+                    "guideme: level `{}` needs a rubric (a /// doc comment or #[guide(rubric = \"…\")])",
+                    v.ident
+                ),
+            ));
+        };
+        levels.push(rubric.clone());
+    }
+    let name = &input.ident;
+    let idents: Vec<&Ident> = vs.iter().map(|v| &v.ident).collect();
+    let indices = 0..vs.len();
+    Ok(quote! {
+        impl ::guideme::Levels for #name {
+            const LEVELS: &'static [&'static str] = &[#(#levels),*];
+            fn from_index(index: usize) -> Option<Self> {
+                const VARIANTS: &[#name] = &[#(#name::#idents),*];
+                VARIANTS.get(index).cloned()
+            }
+            fn index(&self) -> usize {
+                match self {
+                    #(#name::#idents => #indices),*
+                }
+            }
+        }
+    })
+}

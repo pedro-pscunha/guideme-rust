@@ -1,0 +1,6 @@
+error: guideme: #[derive(Choice)] needs unit variants; `One` has fields
+ --> tests/ui/tuple_variant.rs:3:5
+  |
+3 | /     /// one
+4 | |     One(u8),
+  | |___________^

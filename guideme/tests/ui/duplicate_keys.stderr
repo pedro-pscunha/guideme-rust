@@ -1,0 +1,5 @@
+error: guideme: duplicate key "same" (also on `A`)
+ --> tests/ui/duplicate_keys.rs:6:5
+  |
+6 |     B,
+  |     ^

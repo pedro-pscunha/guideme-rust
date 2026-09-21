@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc be2aeab8052f7a5c18df57c548ed0c6173406e7a0e1558f543abcc8dbfafe297 # shrinks to qs = {"q0": Noul { instructions: Instructions(String(" ")), criteria: None }}, ans = {"q0": Score { score: 0.5, legend: {0: "level 0", 1: "level 1"}, probabilities: {0: Probability(0.0), 1: Probability(0.0)}, confidence: Confidence(0.0) }}

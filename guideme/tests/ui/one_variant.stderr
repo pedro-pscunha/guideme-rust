@@ -1,0 +1,5 @@
+error: guideme: #[derive(Levels)] needs at least two variants
+ --> tests/ui/one_variant.rs:2:6
+  |
+2 | enum Bad {
+  |      ^^^

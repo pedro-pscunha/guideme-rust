@@ -1,0 +1,5 @@
+error: guideme: a Score may have at most 10 levels
+ --> tests/ui/eleven_levels.rs:2:6
+  |
+2 | enum Bad {
+  |      ^^^

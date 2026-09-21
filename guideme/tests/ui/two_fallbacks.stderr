@@ -1,0 +1,5 @@
+error: guideme: only one variant may be #[guide(fallback)]
+ --> tests/ui/two_fallbacks.rs:6:5
+  |
+6 |     B,
+  |     ^

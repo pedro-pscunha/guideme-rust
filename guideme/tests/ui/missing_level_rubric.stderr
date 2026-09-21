@@ -1,0 +1,5 @@
+error: guideme: level `High` needs a rubric (a /// doc comment or #[guide(rubric = "…")])
+ --> tests/ui/missing_level_rubric.rs:5:5
+  |
+5 |     High,
+  |     ^^^^
