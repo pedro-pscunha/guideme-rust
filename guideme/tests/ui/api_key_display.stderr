@@ -1,0 +1,8 @@
+error[E0277]: `ApiKey` doesn't implement `std::fmt::Display`
+ --> tests/ui/api_key_display.rs:4:22
+  |
+4 |     let _ = format!("{key}");
+  |                      ^^^^^ `ApiKey` cannot be formatted with the default formatter
+  |
+  = help: the trait `std::fmt::Display` is not implemented for `ApiKey`
+  = note: in format strings you may be able to use `{:?}` (or {:#?} for pretty-print) instead

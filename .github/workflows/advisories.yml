@@ -1,0 +1,36 @@
+name: Advisories
+
+# A new RUSTSEC advisory lands against an unchanged Cargo.lock, so the gate on
+# push and pull_request never sees it. This is the run that does.
+on:
+  schedule:
+    - cron: "17 6 * * 1" # Mondays, 06:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  deny:
+    name: cargo deny
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Resolve the toolchain pinned by rust-toolchain.toml
+        run: cargo --version
+
+      # cargo-deny's version comes from mise.toml, same as in the gate.
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+
+      # The same task the gate runs, so a failure here is a failure there too.
+      # It fetches the advisory database, which needs network.
+      - name: mise run deny
+        run: mise run deny

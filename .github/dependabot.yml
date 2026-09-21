@@ -1,0 +1,8 @@
+# The workflows pin every action to a commit SHA, which is immutable on purpose.
+# This is the one thing that moves those pins forward.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

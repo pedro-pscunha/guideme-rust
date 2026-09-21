@@ -1,15 +1,17 @@
 [tools]
-"aqua:evilmartians/lefthook" = "2.1.9"
+"aqua:gitleaks/gitleaks" = "8.30.1"
 "aqua:nextest-rs/nextest/cargo-nextest" = "0.9.137"
 "aqua:EmbarkStudios/cargo-deny" = "0.20.2"
 
+# examples/otlp is its own workspace root, so `--all` at the repository root never reaches
+# it. Formatting compiles nothing, so the example is included here rather than only in CI.
 [tasks.fmt]
-description = "Format the workspace"
-run = "cargo fmt --all"
+description = "Format the workspace and the example"
+run = ["cargo fmt --all", "cargo fmt --all --manifest-path examples/otlp/Cargo.toml"]
 
 [tasks.fmt-check]
 description = "Fail if anything is unformatted"
-run = "cargo fmt --all --check"
+run = ["cargo fmt --all --check", "cargo fmt --all --check --manifest-path examples/otlp/Cargo.toml"]
 
 [tasks.lint]
 description = "Clippy, all targets, warnings are errors"
@@ -37,5 +39,22 @@ description = "The full gate, in order"
 run = ["mise run fmt-check", "mise run lint", "mise run test", "mise run doc", "mise run deny"]
 
 [tasks.hooks]
-description = "Install git hooks"
-run = "sh scripts/install-hooks.sh"
+description = "Activate the tracked git hooks in .githooks"
+# Validate before configuring: a repo-local core.hooksPath replaces the global
+# one, so writing it and then failing would leave fewer gates than before.
+run = '''
+for hook in .githooks/pre-commit .githooks/pre-push; do
+  if [ ! -x "$hook" ]; then
+    echo "$hook is not executable — git would skip it; nothing was changed" >&2
+    exit 1
+  fi
+done
+git config --local core.hooksPath .githooks
+active="$(git config --get core.hooksPath)"
+if [ "$active" != ".githooks" ]; then
+  echo "core.hooksPath resolves to '$active', not .githooks — the hooks would not fire" >&2
+  git config --local --unset core.hooksPath
+  exit 1
+fi
+echo "hooks active: .githooks (pre-commit, pre-push)"
+'''

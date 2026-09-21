@@ -40,8 +40,11 @@ change to any of them must land there in the same commit, and the names are part
 cross-SDK contract (see below).
 
 `examples/` holds runnable programs. Each is its own workspace root with its own lock file, so
-the gate does not build them and their dependencies stay out of the library's tree. Build one
-by running cargo inside its directory.
+the gate formats but does not build them, and their dependencies stay out of the library's
+tree. Build one by running cargo inside its directory. CI does build `examples/otlp` with `--locked`, and its
+lock file pins `guideme` through a path dependency, so a change to the library's dependency
+set **or its version** must refresh `examples/otlp/Cargo.lock` in the same pull request:
+`cargo build` inside `examples/otlp`, without `--locked`, rewrites it.
 
 ## Invariants
 
@@ -55,7 +58,7 @@ These hold everywhere in `guideme/src` and `guideme-derive/src`. The lints in th
 - Probabilities and confidences are validated once, at the wire, into `Probability`/`Confidence`.
 - Fail loudly. Unknown answer kind, option or level not in the rubric, malformed body, bad thresholds, empty batch, duplicate runtime keys: each is a typed error. Never a default, never a log-and-continue.
 - The API key is never printed. `ApiKey`'s `Debug` is `ApiKey(***)`; it has no `Display` or `Serialize`.
-- State is user data. It is never recorded on a span unless `record_state(true)` was set.
+- State is user data. Its content is never recorded on a span unless `record_state(true)` was set; its length, `guideme.state.bytes`, always is.
 - Telemetry field names come from the OpenTelemetry semantic conventions when one exists (`gen_ai.*`, `http.*`, `server.*`, `url.*`, `error.type`) and are namespaced `guideme.` otherwise. Numbers are `i64`. Failures mark the span (`error.type`, `otel.status_code`, `otel.status_description`) and are returned; no `ERROR` event is ever emitted.
 - Every public item has a doc comment (`missing_docs` is denied). Doc comments are what the derive turns into rubrics, so they are part of the contract.
 - Dependencies stay minimal. Adding one needs a reason in the commit message. Jitter uses `std::hash::RandomState`, not `rand`, on purpose.
@@ -99,7 +102,7 @@ mise run check      # the gate: fmt-check, clippy -D warnings, nextest, doctests
 mise run test       # nextest + doctests only
 mise run lint       # clippy only
 mise run spec       # regenerate spec/ after any change to api, policy, or the vector grid
-mise run hooks      # install the git hooks (see below)
+mise run hooks      # activate the tracked git hooks in .githooks (see below)
 ```
 
 Run everything from the repo root. Capture long output to a file; do not pipe a gate through
@@ -107,11 +110,30 @@ Run everything from the repo root. Capture long output to a file; do not pipe a 
 
 ## Git
 
-- Branch from `main`, open a PR, squash-merge. `main` is protected by the gate.
-- The pre-commit hook runs fmt and clippy; the pre-push hook runs `mise run check`.
-  If a global `core.hooksPath` is set, git runs only that directory; `mise run hooks`
-  exits non-zero and names any hook that will not fire. Run `mise run check` by hand before
-  pushing when that happens.
+- Branch from `main`, open a PR, squash-merge. `main` takes pull requests only: a GitHub
+  ruleset requires every CI check below to pass before a merge, and refuses direct pushes.
+- CI (`.github/workflows/ci.yml`) runs the same gate on every pull request and on `main`,
+  scans the whole history with `gitleaks`, builds and lints `examples/otlp`, and proves the
+  crate builds on the MSRV. A weekly run re-checks the advisory database against an unchanged
+  lock file. CI holds no secrets and never runs the live tests. `.github/dependabot.yml` is
+  what moves the SHA-pinned actions forward.
+- The hooks are tracked in `.githooks/` and do nothing until you run `mise run hooks`, which
+  points this repository's `core.hooksPath` at that directory and fails, leaving nothing
+  changed, if the result is not active. Git reads one hooks directory and a repo-local
+  `core.hooksPath` outranks a global one, so these fire even where you have a global hooks
+  directory — which also means a global secret-scanning hook stops running here, and is why
+  these hooks scan for secrets themselves.
+- `pre-commit`: `gitleaks` on the staged change, then `mise run fmt-check` and `mise run lint`.
+  `pre-push`: `gitleaks` over every range git reports as being pushed, so a branch other than
+  the checked-out one is scanned too, then `mise run check` when a branch with content is
+  pushed. A delete or a tag-only push runs no gate.
+- Every tool a hook needs is resolved loudly. A missing `gitleaks` or `mise` refuses the
+  commit or the push; no hook ever skips a check because a binary was not on `PATH`. A
+  scanner that fails to run is reported as that, not as a finding.
+- `--no-verify` skips a hook. Two known limits are not escape hatches but read like them: the
+  gate inspects the working tree, not the index or the pushed commit, so a partial `git add -p`
+  is checked against the files on disk; and a checkout of a commit older than `.githooks/` has
+  no hooks at all, global ones included. CI on every pull request is the backstop for both.
 - Commit messages: imperative subject under 72 characters, body says why. No trailers, no
   tool attributions, no generated-by lines.
 - Never commit an API key, a `.env`, or anything under `.tmp/`.
@@ -139,7 +161,9 @@ orders them itself.
 to it and leaves existing lock files alone, but it can never be deleted or replaced. Get the
 gate green before uploading, not after.
 
-1. Bump `version` in the root `Cargo.toml`; both crates inherit it.
+1. Bump `version` in the root `Cargo.toml`; both crates inherit it. Then `cargo build` inside
+   `examples/otlp` without `--locked`, and commit its refreshed `Cargo.lock` with the bump:
+   the example pins the library's version, and CI builds it `--locked`.
 2. Move the `Unreleased` notes in `CHANGELOG.md` under the new version with today's date.
 3. `mise run check`, then commit and push.
 4. `git tag -a vX.Y.Z` and push the tag.

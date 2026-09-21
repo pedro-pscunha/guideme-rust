@@ -220,15 +220,19 @@ Retries on 429 and 529 use exponential backoff with jitter, capped at 30 s, and 
 
 ## Development
 
-Tooling is managed by [mise](https://mise.jdx.dev); `mise install` fetches lefthook,
+Tooling is managed by [mise](https://mise.jdx.dev); `mise install` fetches gitleaks,
 cargo-nextest and cargo-deny. The toolchain is pinned in `rust-toolchain.toml`.
 
 ```
 mise run check    # fmt-check, clippy -D warnings, nextest, doctests, rustdoc, cargo-deny
 mise run test     # nextest + doctests
 mise run spec     # regenerate spec/ after changing api, policy, or the vector grid
-mise run hooks    # install the git hooks
+mise run hooks    # point core.hooksPath at the tracked hooks in .githooks
 ```
+
+The hooks are tracked, not generated: `mise run hooks` sets this repository's
+`core.hooksPath` to `.githooks` and verifies it took effect. `AGENTS.md` says what each stage
+runs.
 
 Library code is held to a strict lint set: pedantic clippy, with `unwrap`, `expect`, `panic`,
 `dbg` and `todo` denied. Tests are few and high-grade: property tests for the policy laws, a
@@ -241,7 +245,8 @@ Two opt-in tests hit the real API and are skipped by default:
 TYPESAFE_API_KEY=… cargo nextest run -p guideme --test live --run-ignored ignored-only --no-capture
 ```
 
-Contributor rules live in `AGENTS.md`.
+Contributor rules live in `AGENTS.md`. Report a vulnerability privately, as `SECURITY.md`
+describes, never in a public issue.
 
 ## License
 

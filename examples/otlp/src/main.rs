@@ -140,9 +140,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
                   I was charged twice and I want the second charge back.";
 
     // One question: one span, one answer event.
-    let urgent = guide
-        .ask(noul("Does this convey urgency?"), ticket)
-        .await?;
+    let urgent = guide.ask(noul("Does this convey urgency?"), ticket).await?;
     println!("urgent: {urgent}");
 
     // Three questions in one request: one span, three answer events.
@@ -167,7 +165,10 @@ async fn run() -> Result<(), Box<dyn Error>> {
     // the span carries `error.type = "unsure"` with an error status.
     let strict = guide.with_policy(Policy::new().min_confidence(0.999))?;
     match strict
-        .ask(score::<Frustration>("How frustrated is the customer?"), ticket)
+        .ask(
+            score::<Frustration>("How frustrated is the customer?"),
+            ticket,
+        )
         .await
     {
         Ok(level) => println!("strict frustration: {level:?}"),
