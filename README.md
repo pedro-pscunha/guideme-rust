@@ -220,7 +220,7 @@ the interface shape.
 | Language | Package | Repository |
 |---|---|---|
 | Rust | [`guideme`](https://crates.io/crates/guideme) | this repository |
-| Python | `guideme` | [guideme-python](https://github.com/pedro-pscunha/guideme-python) |
+| Python | [`guideme`](https://pypi.org/project/guideme/) | [guideme-python](https://github.com/pedro-pscunha/guideme-python) |
 
 The Python SDK mirrors the verbs in Python's idiom: `Choice` and `Levels` are `enum.Enum`
 bases whose members carry the rubric, `.or(value)` is `.otherwise(value)` because `or` is a
