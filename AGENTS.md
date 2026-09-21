@@ -14,8 +14,10 @@ to crates.io under `MIT OR Apache-2.0`:
 The public surface is a published API. Anything removed or renamed in it is a breaking change
 for people who do not work here, so it needs a major bump and a `CHANGELOG.md` entry.
 
-The live TypeSafe docs are the source of truth for the wire contract:
-`https://docs.typesafe.ai/api.md`. Re-read that page before touching `guideme/src/api/`.
+The live TypeSafe docs are the source of truth for the wire contract, over two pages:
+`https://docs.typesafe.ai/api.md` covers `POST /v1/systemone` and
+`https://docs.typesafe.ai/models.md` covers `GET /v1/models`. Re-read both before touching
+`guideme/src/api/`.
 
 ## Layout and seams
 
@@ -140,8 +142,8 @@ Run everything from the repo root. Capture long output to a file; do not pipe a 
 
 ## Changing the contract
 
-1. Read the current TypeSafe API page.
-2. Change `api/mod.rs` to mirror it. Add or update the docs-example fixture in `tests/wire.rs`.
+1. Read the current TypeSafe API and models pages.
+2. Change `api/mod.rs` to mirror them. Add or update the docs-example fixture in `tests/wire.rs`.
 3. If the change reaches `policy`, update `resolve`, the property tests, and `docs/contract.md`.
 4. `mise run spec`, commit the regenerated `spec/`.
 5. `mise run check`.
