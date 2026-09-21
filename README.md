@@ -73,6 +73,9 @@ guideme = "0.1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 ```
 
+Rust 1.98 or newer. `#[derive(Choice)]` and `#[derive(Levels)]` come with the crate; you
+never depend on `guideme-derive` yourself.
+
 Set `TYPESAFE_API_KEY` in the environment, or pass a key to `Guide::builder().api_key(..)`.
 
 ## The three questions

@@ -5,10 +5,14 @@ Rules for anyone (or anything) changing this repository. Read fully before editi
 ## What this is
 
 A Rust workspace that makes a TypeSafe Jev judgment usable as control flow: a yes/no is an
-`if`, a choice is an exhaustive `match`, a score is a comparison. Two crates:
+`if`, a choice is an exhaustive `match`, a score is a comparison. Two crates, both published
+to crates.io under `MIT OR Apache-2.0`:
 
 - `guideme`: the product. Public surface is what `guideme/src/lib.rs` re-exports, nothing else.
 - `guideme-derive`: `#[derive(Choice)]` and `#[derive(Levels)]`, re-exported by `guideme`.
+
+The public surface is a published API. Anything removed or renamed in it is a breaking change
+for people who do not work here, so it needs a major bump and a `CHANGELOG.md` entry.
 
 The live TypeSafe docs are the source of truth for the wire contract:
 `https://docs.typesafe.ai/api.md`. Re-read that page before touching `guideme/src/api/`.
@@ -124,6 +128,33 @@ Run everything from the repo root. Capture long output to a file; do not pipe a 
 Renaming, adding or removing a span or event field is also a contract change: it goes through
 `docs/observability.md`, `docs/contract.md` and `CHANGELOG.md`, and is announced the same way.
 `spec/` is unaffected.
+
+## Releasing
+
+Both crates are on crates.io and share the workspace `version`. `guideme` depends on
+`guideme-derive` by version, so the two are always published together, derive first. Cargo
+orders them itself.
+
+**A published version is permanent.** It can be yanked, which stops new dependents resolving
+to it and leaves existing lock files alone, but it can never be deleted or replaced. Get the
+gate green before uploading, not after.
+
+1. Bump `version` in the root `Cargo.toml`; both crates inherit it.
+2. Move the `Unreleased` notes in `CHANGELOG.md` under the new version with today's date.
+3. `mise run check`, then commit and push.
+4. `git tag -a vX.Y.Z` and push the tag.
+5. Publish with the crates.io token from Infisical (`CRATES_IO_TOKEN`, `prod`, path `/`):
+
+```
+export CARGO_REGISTRY_TOKEN=…
+cargo publish --workspace --locked
+```
+
+6. `gh release create vX.Y.Z --notes-file …`, attaching the archives from `target/package/`.
+7. Check docs.rs built: `https://docs.rs/guideme/X.Y.Z`.
+
+Breaking the observability field names or the policy semantics is a contract change; see
+above and below before bumping.
 
 ## Other SDKs
 
