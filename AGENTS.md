@@ -18,11 +18,11 @@ The live TypeSafe docs are the source of truth for the wire contract:
 | Path | Owns | Rule |
 |---|---|---|
 | `guideme/src/api/mod.rs` | exact wire mirror of `POST /v1/systemone` and `GET /v1/models` | mirrors the docs field for field; no policy here |
-| `guideme/src/api/client.rs` | HTTP, retries, status → `Error` | the only file that may name `reqwest` |
+| `guideme/src/api/client.rs` | HTTP, retries, status → `Error`, one HTTP client span per attempt and the `guideme.retry` event | the only file that may name `reqwest`; span fields follow the OpenTelemetry HTTP client conventions |
 | `guideme/src/policy.rs` | `resolve(&Answer, Thresholds) -> Outcome`, `Policy`, `Thresholds` | pure: no I/O, no generics, no Rust enums; its behaviour is the shared contract |
 | `guideme/src/question.rs` | question kinds, constructors, `Options`/`Levels` traits, the unsure ladder | every kind stays sealed |
 | `guideme/src/ask.rs` | the `Ask` shape trait (question, tuple, `Vec`, `BTreeMap`) | sealed; ids are `q0..qN` in encounter order |
-| `guideme/src/guide.rs` | `Guide::ask`, spans and events | one `guideme.ask` span per request, one `guideme.answer` event per question |
+| `guideme/src/guide.rs` | `Guide::ask`, spans and events | one `guideme.ask` span per request, one `guideme.answer` event per question; span fields follow the OpenTelemetry GenAI conventions, anything else is namespaced `guideme.` |
 | `guideme/src/spec.rs`, `src/bin/spec.rs` | schemas and golden vectors under `spec/` | regenerate with `mise run spec`; the drift test fails otherwise |
 | `guideme-derive/src/lib.rs` | the two derives | every misuse is a compile error with a message naming the rule |
 
@@ -47,6 +47,7 @@ These hold everywhere in `guideme/src` and `guideme-derive/src`. The lints in th
 - Fail loudly. Unknown answer kind, option or level not in the rubric, malformed body, bad thresholds, empty batch, duplicate runtime keys: each is a typed error. Never a default, never a log-and-continue.
 - The API key is never printed. `ApiKey`'s `Debug` is `ApiKey(***)`; it has no `Display` or `Serialize`.
 - State is user data. It is never recorded on a span unless `record_state(true)` was set.
+- Telemetry field names come from the OpenTelemetry semantic conventions when one exists (`gen_ai.*`, `http.*`, `server.*`, `url.*`, `error.type`) and are namespaced `guideme.` otherwise. Numbers are `i64`. Failures mark the span (`error.type`, `otel.status_code`, `otel.status_description`) and are returned; no `ERROR` event is ever emitted.
 - Every public item has a doc comment (`missing_docs` is denied). Doc comments are what the derive turns into rubrics, so they are part of the contract.
 - Dependencies stay minimal. Adding one needs a reason in the commit message. Jitter uses `std::hash::RandomState`, not `rand`, on purpose.
 

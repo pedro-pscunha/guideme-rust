@@ -61,3 +61,24 @@ pub enum Error {
         detail: String,
     },
 }
+
+impl Error {
+    /// A stable, low-cardinality name for the variant: `auth`, `invalid`, `rate_limited`,
+    /// `overloaded`, `transport`, `unexpected_status`, `protocol`, `unsure` or `config`.
+    ///
+    /// This is the value of the `error.type` attribute on a failed span, so it is safe to
+    /// group metrics by.
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Error::Auth => "auth",
+            Error::Invalid { .. } => "invalid",
+            Error::RateLimited { .. } => "rate_limited",
+            Error::Overloaded => "overloaded",
+            Error::Transport(_) => "transport",
+            Error::UnexpectedStatus { .. } => "unexpected_status",
+            Error::Protocol { .. } => "protocol",
+            Error::Unsure { .. } => "unsure",
+            Error::Config { .. } => "config",
+        }
+    }
+}

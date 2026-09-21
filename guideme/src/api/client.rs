@@ -1,8 +1,14 @@
 //! The only module that touches HTTP. Retries `429`/`529` with exponential backoff,
 //! honouring `retry-after`, and maps statuses to [`Error`].
+//!
+//! Every attempt is one span shaped by the OpenTelemetry HTTP client conventions, so a
+//! retried request shows up as sibling spans under the caller's span, each with its own
+//! status code. A throttled attempt also emits a `guideme.retry` warning.
 
 use std::hash::{BuildHasher, RandomState};
 use std::time::Duration;
+
+use tracing::{Instrument, Span, field, info_span};
 
 use super::{ModelInfo, ModelsResponse, Request, Response};
 use crate::{ApiKey, Error};
@@ -10,12 +16,15 @@ use crate::{ApiKey, Error};
 const DEFAULT_BASE_URL: &str = "https://api.typesafe.ai";
 const MAX_BACKOFF: Duration = Duration::from_secs(30);
 const JITTER_MS: u64 = 250;
+const TARGET: &str = "guideme::api";
 
 /// A client for the TypeSafe HTTP API. Cheap to clone.
 #[derive(Clone, Debug)]
 pub struct Client {
     http: reqwest::Client,
     base_url: String,
+    host: String,
+    port: u16,
     api_key: ApiKey,
     max_retries: u32,
     backoff: Duration,
@@ -48,52 +57,91 @@ impl Client {
         }
     }
 
-    /// `POST /v1/systemone`.
-    pub async fn evaluate(&self, request: &Request) -> Result<Response, Error> {
-        self.evaluate_counted(request)
-            .await
-            .map(|(response, _)| response)
+    /// The host and port every request goes to.
+    pub(crate) fn server(&self) -> (&str, u16) {
+        (&self.host, self.port)
     }
 
-    /// `POST /v1/systemone`, also reporting how many retries were spent.
+    /// `POST /v1/systemone`.
     ///
     /// A `retry-after` longer than 30 s is not waited for: the call fails with
     /// [`Error::RateLimited`] carrying that duration, so the caller decides.
-    pub(crate) async fn evaluate_counted(
-        &self,
-        request: &Request,
-    ) -> Result<(Response, u32), Error> {
+    pub async fn evaluate(&self, request: &Request) -> Result<Response, Error> {
         let url = format!("{}/v1/systemone", self.base_url);
         let body = serde_json::to_vec(request).map_err(|e| Error::Config {
             detail: format!("request is not serialisable: {e}"),
         })?;
         let mut retry_after = None;
         for attempt in 0..=self.max_retries {
-            let response = self
+            let span = info_span!(
+                target: TARGET,
+                "POST /v1/systemone",
+                otel.kind = "client",
+                http.request.method = "POST",
+                server.address = self.host.as_str(),
+                server.port = i64::from(self.port),
+                url.full = url.as_str(),
+                url.template = "/v1/systemone",
+                http.request.resend_count = field::Empty,
+                http.response.status_code = field::Empty,
+                error.type = field::Empty,
+                otel.status_code = field::Empty,
+            );
+            if attempt > 0 {
+                span.record("http.request.resend_count", i64::from(attempt));
+            }
+            let sent = self
                 .http
                 .post(&url)
                 .bearer_auth(self.api_key.expose())
                 .header(reqwest::header::CONTENT_TYPE, "application/json")
                 .body(body.clone())
                 .send()
-                .await
-                .map_err(transport)?;
-            let status = response.status().as_u16();
-            match status {
-                200 => return decode::<Response>(response).await.map(|r| (r, attempt)),
-                429 | 529 => {
-                    retry_after = parse_retry_after(&response);
-                    if attempt == self.max_retries || retry_after.is_some_and(|d| d > MAX_BACKOFF) {
-                        return Err(if status == 429 {
-                            Error::RateLimited { retry_after }
-                        } else {
-                            Error::Overloaded
-                        });
-                    }
-                    tokio::time::sleep(retry_after.unwrap_or_else(|| self.delay(attempt))).await;
+                .instrument(span.clone())
+                .await;
+            let response = match sent {
+                Ok(response) => response,
+                Err(e) => {
+                    let e = transport(e);
+                    fail(&span, e.kind());
+                    return Err(e);
                 }
-                other => return Err(classify(other, response).await),
+            };
+            let status = response.status().as_u16();
+            span.record("http.response.status_code", i64::from(status));
+            if status == 200 {
+                let decoded = decode::<Response>(response).instrument(span.clone()).await;
+                if let Err(e) = &decoded {
+                    fail(&span, e.kind());
+                }
+                return decoded;
             }
+            fail(&span, &status.to_string());
+            if !matches!(status, 429 | 529) {
+                return Err(classify(status, response).await);
+            }
+            retry_after = parse_retry_after(&response);
+            if attempt == self.max_retries || retry_after.is_some_and(|d| d > MAX_BACKOFF) {
+                return Err(if status == 429 {
+                    Error::RateLimited { retry_after }
+                } else {
+                    Error::Overloaded
+                });
+            }
+            let delay = retry_after.unwrap_or_else(|| self.delay(attempt));
+            span.in_scope(|| {
+                tracing::event!(
+                    name: "guideme.retry",
+                    target: TARGET,
+                    tracing::Level::WARN,
+                    http.response.status_code = i64::from(status),
+                    guideme.retry.attempt = i64::from(attempt) + 1,
+                    guideme.retry.delay_ms = i64::try_from(delay.as_millis()).unwrap_or(i64::MAX),
+                "{status} from TypeSafe, retrying in {} ms",
+                delay.as_millis(),
+                );
+            });
+            tokio::time::sleep(delay).await;
         }
         Err(Error::RateLimited { retry_after })
     }
@@ -101,15 +149,50 @@ impl Client {
     /// `GET /v1/models`. Not retried.
     pub async fn models(&self) -> Result<Vec<ModelInfo>, Error> {
         let url = format!("{}/v1/models", self.base_url);
-        let response = self
+        let span = info_span!(
+            target: TARGET,
+            "GET /v1/models",
+            otel.kind = "client",
+            http.request.method = "GET",
+            server.address = self.host.as_str(),
+            server.port = i64::from(self.port),
+            url.full = url.as_str(),
+            url.template = "/v1/models",
+            http.response.status_code = field::Empty,
+            error.type = field::Empty,
+            otel.status_code = field::Empty,
+        );
+        let sent = self
             .http
             .get(&url)
             .bearer_auth(self.api_key.expose())
             .send()
-            .await
-            .map_err(transport)?;
-        match response.status().as_u16() {
-            200 => Ok(decode::<ModelsResponse>(response).await?.models),
+            .instrument(span.clone())
+            .await;
+        let response = match sent {
+            Ok(response) => response,
+            Err(e) => {
+                let e = transport(e);
+                fail(&span, e.kind());
+                return Err(e);
+            }
+        };
+        let status = response.status().as_u16();
+        span.record("http.response.status_code", i64::from(status));
+        if status != 200 {
+            fail(&span, &status.to_string());
+        }
+        match status {
+            200 => {
+                let decoded = decode::<ModelsResponse>(response)
+                    .instrument(span.clone())
+                    .await
+                    .map(|body| body.models);
+                if let Err(e) = &decoded {
+                    fail(&span, e.kind());
+                }
+                decoded
+            }
             429 => Err(Error::RateLimited {
                 retry_after: parse_retry_after(&response),
             }),
@@ -154,20 +237,44 @@ impl ClientBuilder {
         self.timeout = d;
         self
     }
-    /// Build the client.
+    /// Build the client. Fails if the base URL has no host or port, or carries credentials:
+    /// the URL is recorded on every request span as `url.full`, which must never hold a
+    /// secret.
     pub fn build(self) -> Result<Client, Error> {
+        let parsed = reqwest::Url::parse(&self.base_url).map_err(|e| Error::Config {
+            detail: format!("base_url {:?}: {e}", self.base_url),
+        })?;
+        if !parsed.username().is_empty() || parsed.password().is_some() {
+            return Err(Error::Config {
+                detail: "base_url must not carry credentials; use the api_key".into(),
+            });
+        }
+        let (Some(host), Some(port)) = (parsed.host_str(), parsed.port_or_known_default()) else {
+            return Err(Error::Config {
+                detail: format!("base_url {:?} needs a host and a port", self.base_url),
+            });
+        };
         let http = reqwest::Client::builder()
             .timeout(self.timeout)
             .build()
             .map_err(transport)?;
         Ok(Client {
             http,
+            host: host.to_owned(),
+            port,
             base_url: self.base_url,
             api_key: self.api_key,
             max_retries: self.max_retries,
             backoff: self.backoff,
         })
     }
+}
+
+/// Marks an attempt span as failed. `error_type` is the status code when a response arrived,
+/// otherwise the [`Error::kind`].
+fn fail(span: &Span, error_type: &str) {
+    span.record("error.type", error_type);
+    span.record("otel.status_code", "ERROR");
 }
 
 /// Non-retryable statuses: `401` and `422` are typed, anything else is unexpected.

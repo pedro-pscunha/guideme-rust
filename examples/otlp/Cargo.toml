@@ -8,8 +8,9 @@ publish = false
 # dependency tree out of the crate's.
 [workspace]
 
-# tracing-opentelemetry 0.33 builds against opentelemetry 0.32, not 0.33. The four crates
-# must agree or the tracer will not satisfy the layer's trait bound.
+# tracing-opentelemetry 0.33 builds against opentelemetry 0.32, not 0.33. Every
+# opentelemetry crate here must agree with it or the tracer will not satisfy the layer's
+# trait bound.
 [dependencies]
 guideme = { path = "../../guideme" }
 tokio = { version = "1.53", features = ["rt-multi-thread", "macros"] }
@@ -18,4 +19,5 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "regist
 tracing-opentelemetry = "0.33"
 opentelemetry = "0.32"
 opentelemetry_sdk = { version = "0.32", features = ["rt-tokio"] }
-opentelemetry-otlp = { version = "0.32", features = ["grpc-tonic"] }
+opentelemetry-otlp = { version = "0.32", features = ["grpc-tonic", "logs", "trace"] }
+opentelemetry-appender-tracing = "0.32"

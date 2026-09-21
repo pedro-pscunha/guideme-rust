@@ -149,14 +149,20 @@ events. A batch is atomic: one answer that cannot be resolved fails the whole ca
 
 ## Observability
 
-One `tracing` span named `guideme.ask` per request, with the model requested and answered,
-question count, token usage, retries, elapsed time, and an `error` field when the ask failed.
-One `guideme.answer` event per question with the outcome, the probability or confidence, the
-unsure verdict and the settled thresholds that produced it. The state is never recorded unless
-you opt in with `record_state(true)`. The API key never appears anywhere.
+One `tracing` span named `guideme.ask` per request, shaped by the OpenTelemetry GenAI
+conventions: `gen_ai.request.model`, `gen_ai.response.model`, `gen_ai.usage.*`, and on
+failure `error.type` with an error status. Under it, one HTTP client span per attempt with
+`http.response.status_code`, so a retry is visible as sibling spans, plus a `WARN` event when
+an attempt is throttled. One `guideme.answer` event per question with the outcome, the
+probability or confidence, the unsure verdict and the settled thresholds that produced it.
+The state is never recorded unless you opt in with `record_state(true)`. The API key never
+appears anywhere.
 
-`docs/observability.md` has the field tables, the `RUST_LOG` targets, and a console and OTLP
-setup. `examples/otlp` is a runnable version of both against the live API.
+Because the shapes are standard, any OTLP backend reads them as is, and events exported as
+OTLP log records carry the trace and span id of the ask they belong to. `docs/observability.md`
+has the field tables, the `RUST_LOG` matrix, the environment variables that point the
+exporter anywhere, and console and OTLP setups. `examples/otlp` runs all of it against the
+live API with a collector that prints what arrives.
 
 ## Errors
 

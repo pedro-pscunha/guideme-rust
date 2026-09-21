@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use tracing::{Instrument, field, info_span};
 
@@ -10,6 +10,8 @@ use crate::api::{Client, ModelInfo, QuestionId, Request};
 use crate::ask::{Ask, Plan, Reply};
 use crate::policy::{self, Outcome, Thresholds, Verdict};
 use crate::{ApiKey, Error, Model, Policy, State};
+
+const TARGET: &str = "guideme";
 
 /// A configured entry point to Jev. Cheap to clone; share it.
 #[derive(Clone, Debug)]
@@ -88,8 +90,8 @@ impl Guide {
     /// encounter order. The call is atomic: one failing answer fails the whole call.
     pub async fn ask<A: Ask>(&self, ask: A, state: impl Into<State>) -> Result<A::Out, Error> {
         let state: State = state.into();
-        // The state is serialised here for `state.bytes` and again by the client; fold into
-        // one pass if document-sized states show up in profiles.
+        // The state is serialised here for `guideme.state.bytes` and again by the client; fold
+        // into one pass if document-sized states show up in profiles.
         let state_json = serde_json::to_string(state.value()?).map_err(|e| Error::Config {
             detail: e.to_string(),
         })?;
@@ -100,26 +102,33 @@ impl Guide {
                 detail: "a batch needs at least one question".into(),
             });
         }
+        let (host, port) = self.inner.client.server();
+        // Field names follow the OpenTelemetry GenAI and HTTP semantic conventions where one
+        // exists and are namespaced under `guideme.` otherwise. The `otel.*` fields are read by
+        // `tracing-opentelemetry` to set the exported span's kind and status; any other
+        // subscriber sees them as ordinary fields.
         let span = info_span!(
+            target: TARGET,
             "guideme.ask",
-            model.requested = self.inner.model.as_str(),
-            model.answered = field::Empty,
-            questions = signed(plan.questions.len()),
-            state.bytes = signed(state_json.len()),
-            state = field::Empty,
-            usage.input_tokens = field::Empty,
-            usage.output_tokens = field::Empty,
-            retries = field::Empty,
-            elapsed_ms = field::Empty,
-            error = field::Empty,
-            // Read by tracing-opentelemetry to set the exported span's status; harmless to
-            // any other subscriber, and only ever recorded on failure.
+            otel.kind = "client",
+            gen_ai.provider.name = "typesafe",
+            gen_ai.operation.name = "ask",
+            gen_ai.request.model = self.inner.model.as_str(),
+            gen_ai.response.model = field::Empty,
+            gen_ai.usage.input_tokens = field::Empty,
+            gen_ai.usage.output_tokens = field::Empty,
+            server.address = host,
+            server.port = i64::from(port),
+            guideme.questions = signed(plan.questions.len()),
+            guideme.state.bytes = signed(state_json.len()),
+            guideme.state = field::Empty,
+            error.type = field::Empty,
             otel.status_code = field::Empty,
+            otel.status_description = field::Empty,
         );
         if self.inner.record_state {
-            span.record("state", state_json.as_str());
+            span.record("guideme.state", state_json.as_str());
         }
-        let started = Instant::now();
         let request = Request {
             state,
             model: self.inner.model.clone(),
@@ -128,24 +137,27 @@ impl Guide {
         let result = self
             .inner
             .client
-            .evaluate_counted(&request)
+            .evaluate(&request)
             .instrument(span.clone())
             .await;
-        span.record("elapsed_ms", signed(started.elapsed().as_millis()));
-        let (response, retries) = match result {
-            Ok(ok) => ok,
+        let response = match result {
+            Ok(response) => response,
             Err(e) => {
                 fail(&span, &e);
                 return Err(e);
             }
         };
-        span.record("model.answered", response.model.as_str());
-        span.record("usage.input_tokens", signed(response.usage.input_tokens));
-        span.record("usage.output_tokens", signed(response.usage.output_tokens));
-        span.record("retries", signed(retries));
+        span.record("gen_ai.response.model", response.model.as_str());
+        span.record(
+            "gen_ai.usage.input_tokens",
+            signed(response.usage.input_tokens),
+        );
+        span.record(
+            "gen_ai.usage.output_tokens",
+            signed(response.usage.output_tokens),
+        );
 
-        let _entered = span.enter();
-        let decoded = (|| {
+        let decoded = span.in_scope(|| {
             let mut outcomes = BTreeMap::new();
             for (id, t) in plan.thresholds {
                 let answer = response.answers.get(&id).ok_or_else(|| Error::Protocol {
@@ -156,7 +168,7 @@ impl Guide {
                 outcomes.insert(id, (outcome, t));
             }
             A::decode(claim, &Reply { outcomes })
-        })();
+        });
         if let Err(e) = &decoded {
             fail(&span, e);
         }
@@ -169,15 +181,37 @@ impl Guide {
     }
 }
 
-/// Marks the ask span as failed, in this crate's vocabulary and OpenTelemetry's.
+/// Marks the ask span as failed: a stable `error.type`, and the status OpenTelemetry expects.
+/// The description is recorded last because `tracing-opentelemetry` lets the last status
+/// field written win.
 fn fail(span: &tracing::Span, error: &Error) {
-    span.record("error", field::display(error));
+    span.record("error.type", error.kind());
     span.record("otel.status_code", "ERROR");
+    span.record("otel.status_description", describe(error).as_str());
+}
+
+/// The status description. Two variants carry a verbatim response body, which could echo
+/// the state; those stay on the returned error and off the span.
+fn describe(error: &Error) -> String {
+    match error {
+        Error::Invalid { .. } => "invalid request: the 422 body is on the returned error".into(),
+        Error::UnexpectedStatus { status, .. } => {
+            format!("unexpected status {status}: the body is on the returned error")
+        }
+        Error::Auth
+        | Error::RateLimited { .. }
+        | Error::Overloaded
+        | Error::Transport(_)
+        | Error::Protocol { .. }
+        | Error::Unsure { .. }
+        | Error::Config { .. } => error.to_string(),
+    }
 }
 
 /// OpenTelemetry attributes are signed, and `tracing-opentelemetry` has no `u64` path: an
 /// unsigned field is exported as a string. Clamping into `i64` keeps these numbers numeric
-/// for whatever consumes the trace.
+/// for whatever consumes the trace. The clamp only bites above 2^63, which no count here
+/// reaches: lengths are bounded by memory and token counts by the request size.
 fn signed(n: impl TryInto<i64>) -> i64 {
     n.try_into().unwrap_or(i64::MAX)
 }
@@ -190,16 +224,20 @@ fn emit(id: &QuestionId, outcome: &Outcome, t: Thresholds) {
                 Verdict::No(p) => ("no", p),
                 Verdict::Unsure(p) => ("unsure", p),
             };
-            tracing::info!(
+            tracing::event!(
                 name: "guideme.answer",
-                question = id.as_str(),
-                kind = "noul",
-                outcome = label,
-                probability = p.get(),
-                unsure = matches!(v, Verdict::Unsure(_)),
-                yes_above = t.yes_above(),
-                no_below = t.no_below(),
-                min_confidence = t.min_confidence(),
+                target: TARGET,
+                tracing::Level::INFO,
+                guideme.question = id.as_str(),
+                guideme.kind = "noul",
+                guideme.outcome = label,
+                guideme.probability = p.get(),
+                guideme.unsure = matches!(v, Verdict::Unsure(_)),
+                guideme.yes_above = t.yes_above(),
+                guideme.no_below = t.no_below(),
+                guideme.min_confidence = t.min_confidence(),
+            "{} noul: {label}",
+            id.as_str(),
             );
         }
         Outcome::Choice {
@@ -208,16 +246,21 @@ fn emit(id: &QuestionId, outcome: &Outcome, t: Thresholds) {
             unsure,
             ..
         } => {
-            tracing::info!(
+            tracing::event!(
                 name: "guideme.answer",
-                question = id.as_str(),
-                kind = "choice",
-                outcome = key.as_str(),
-                confidence = confidence.get(),
-                unsure = *unsure,
-                yes_above = t.yes_above(),
-                no_below = t.no_below(),
-                min_confidence = t.min_confidence(),
+                target: TARGET,
+                tracing::Level::INFO,
+                guideme.question = id.as_str(),
+                guideme.kind = "choice",
+                guideme.outcome = key.as_str(),
+                guideme.confidence = confidence.get(),
+                guideme.unsure = *unsure,
+                guideme.yes_above = t.yes_above(),
+                guideme.no_below = t.no_below(),
+                guideme.min_confidence = t.min_confidence(),
+            "{} choice: {}",
+            id.as_str(),
+            key.as_str(),
             );
         }
         Outcome::Score {
@@ -227,17 +270,21 @@ fn emit(id: &QuestionId, outcome: &Outcome, t: Thresholds) {
             unsure,
             ..
         } => {
-            tracing::info!(
+            tracing::event!(
                 name: "guideme.answer",
-                question = id.as_str(),
-                kind = "score",
-                outcome = signed(*index),
-                value = *value,
-                confidence = confidence.get(),
-                unsure = *unsure,
-                yes_above = t.yes_above(),
-                no_below = t.no_below(),
-                min_confidence = t.min_confidence(),
+                target: TARGET,
+                tracing::Level::INFO,
+                guideme.question = id.as_str(),
+                guideme.kind = "score",
+                guideme.outcome = signed(*index),
+                guideme.value = *value,
+                guideme.confidence = confidence.get(),
+                guideme.unsure = *unsure,
+                guideme.yes_above = t.yes_above(),
+                guideme.no_below = t.no_below(),
+                guideme.min_confidence = t.min_confidence(),
+            "{} score: level {index}",
+            id.as_str(),
             );
         }
     }

@@ -35,6 +35,7 @@ Each module survives the test.
 - **Score plain output is the argmax level.** `.detail()` exposes the API's expected `value` too.
 - **`Levels` does not generate `Ord`.** Callers derive `PartialOrd, Ord`; declaration order equals level order, so the two cannot disagree.
 - **No `rand`.** Backoff jitter comes from `std::hash::RandomState`.
+- **Telemetry speaks OpenTelemetry.** The ask span uses the GenAI conventions, each HTTP attempt is its own client span with the HTTP conventions, and a failure is `error.type` plus an error status on the span rather than an `ERROR` event. Anything without a convention is namespaced `guideme.`. The crate depends on `tracing` only; `docs/observability.md` shows the exporter side.
 
 ## Sharp edges
 

@@ -6,28 +6,54 @@
     missing_docs
 )]
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex};
 
 use guideme::{Guide, Key, choose_among, noul};
 use tracing::field::{Field, Visit};
 use tracing::span::{Attributes, Id, Record};
-use tracing::{Event, Subscriber};
+use tracing::{Event, Level, Subscriber};
 use tracing_subscriber::layer::{Context, Layer};
 use tracing_subscriber::prelude::*;
+use tracing_subscriber::registry::LookupSpan;
 use wiremock::matchers::method;
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
+type Fields = BTreeMap<String, String>;
+
+struct Span {
+    name: String,
+    parent: Option<String>,
+    fields: Fields,
+}
+
 #[derive(Default)]
 struct Captured {
-    span_fields: BTreeMap<String, String>,
-    events: Vec<BTreeMap<String, String>>,
+    index: HashMap<u64, usize>,
+    spans: Vec<Span>,
+    events: Vec<(String, Level, Fields)>,
+}
+
+impl Captured {
+    fn span(&self, name: &str) -> &Fields {
+        &self.spans_named(name)[0].fields
+    }
+    fn spans_named(&self, name: &str) -> Vec<&Span> {
+        self.spans.iter().filter(|s| s.name == name).collect()
+    }
+    fn events_named(&self, name: &str) -> Vec<(&Level, &Fields)> {
+        self.events
+            .iter()
+            .filter(|(n, _, _)| n == name)
+            .map(|(_, l, f)| (l, f))
+            .collect()
+    }
 }
 
 #[derive(Clone, Default)]
 struct Capture(Arc<Mutex<Captured>>);
 
-struct Collect<'a>(&'a mut BTreeMap<String, String>);
+struct Collect<'a>(&'a mut Fields);
 
 impl Visit for Collect<'_> {
     fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
@@ -50,34 +76,57 @@ impl Visit for Collect<'_> {
     }
 }
 
-impl<S: Subscriber> Layer<S> for Capture {
-    fn on_new_span(&self, attrs: &Attributes<'_>, _id: &Id, _ctx: Context<'_, S>) {
-        if attrs.metadata().name() == "guideme.ask" {
-            attrs.record(&mut Collect(&mut self.0.lock().unwrap().span_fields));
-        }
+impl<S: Subscriber + for<'a> LookupSpan<'a>> Layer<S> for Capture {
+    fn on_new_span(&self, attrs: &Attributes<'_>, id: &Id, ctx: Context<'_, S>) {
+        let mut fields = Fields::new();
+        attrs.record(&mut Collect(&mut fields));
+        let parent = ctx
+            .span(id)
+            .and_then(|s| s.parent())
+            .map(|p| p.name().to_owned());
+        let mut captured = self.0.lock().unwrap();
+        let at = captured.spans.len();
+        captured.index.insert(id.into_u64(), at);
+        captured.spans.push(Span {
+            name: attrs.metadata().name().to_owned(),
+            parent,
+            fields,
+        });
     }
-    fn on_record(&self, _id: &Id, values: &Record<'_>, _ctx: Context<'_, S>) {
-        values.record(&mut Collect(&mut self.0.lock().unwrap().span_fields));
+    fn on_record(&self, id: &Id, values: &Record<'_>, _ctx: Context<'_, S>) {
+        let mut captured = self.0.lock().unwrap();
+        let at = captured.index[&id.into_u64()];
+        values.record(&mut Collect(&mut captured.spans[at].fields));
     }
     fn on_event(&self, event: &Event<'_>, _ctx: Context<'_, S>) {
-        if event.metadata().name() == "guideme.answer" {
-            let mut fields = BTreeMap::new();
-            event.record(&mut Collect(&mut fields));
-            self.0.lock().unwrap().events.push(fields);
-        }
+        let mut fields = Fields::new();
+        event.record(&mut Collect(&mut fields));
+        self.0.lock().unwrap().events.push((
+            event.metadata().name().to_owned(),
+            *event.metadata().level(),
+            fields,
+        ));
     }
 }
 
 const REPLY: &str = r#"{"model":"jev-1.13.0","answers":{"q0":{"type":"noul","noul":0.95},"q1":{"type":"choice","choice":"billing","probabilities":{"billing":0.88,"sales":0.12},"confidence":0.81}},"usage":{"input_tokens":296,"output_tokens":20}}"#;
 
+fn install(capture: &Capture) -> tracing::subscriber::DefaultGuard {
+    tracing::subscriber::set_default(tracing_subscriber::registry().with(capture.clone()))
+}
+
 #[tokio::test]
-async fn the_ask_span_carries_typed_fields_and_never_the_state_by_default()
+async fn one_ask_is_one_span_with_an_http_span_per_attempt()
 -> Result<(), Box<dyn std::error::Error>> {
     let capture = Capture::default();
-    let _guard =
-        tracing::subscriber::set_default(tracing_subscriber::registry().with(capture.clone()));
+    let _guard = install(&capture);
 
     let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(429).insert_header("retry-after", "0"))
+        .up_to_n_times(1)
+        .mount(&server)
+        .await;
     Mock::given(method("POST"))
         .respond_with(ResponseTemplate::new(200).set_body_string(REPLY))
         .mount(&server)
@@ -100,40 +149,85 @@ async fn the_ask_span_carries_typed_fields_and_never_the_state_by_default()
     assert_eq!(team, Key("billing".into()));
 
     let captured = capture.0.lock().unwrap();
-    let f = &captured.span_fields;
-    assert_eq!(f["model.requested"], "jev-latest");
-    assert_eq!(f["model.answered"], "jev-1.13.0");
-    assert_eq!(f["questions"], "2");
-    assert_eq!(f["usage.input_tokens"], "296");
-    assert_eq!(f["usage.output_tokens"], "20");
-    assert_eq!(f["retries"], "0");
-    assert!(f.contains_key("elapsed_ms"));
-    assert!(!f.contains_key("state"));
-    assert!(!f.values().any(|v| v.contains("secret state text")));
 
-    assert_eq!(captured.events.len(), 2);
-    let e = &captured.events[0];
-    assert_eq!(e["question"], "q0");
-    assert_eq!(e["kind"], "noul");
-    assert_eq!(e["outcome"], "yes");
-    assert_eq!(e["probability"], "0.95");
-    assert_eq!(e["unsure"], "false");
-    assert_eq!(e["yes_above"], "0.5");
-    assert_eq!(e["min_confidence"], "0");
-    let e = &captured.events[1];
-    assert_eq!(e["question"], "q1");
-    assert_eq!(e["kind"], "choice");
-    assert_eq!(e["outcome"], "billing");
-    assert_eq!(e["confidence"], "0.81");
-    assert!(!e.contains_key("probability"));
+    let ask = captured.span("guideme.ask");
+    assert_eq!(ask["otel.kind"], "client");
+    assert_eq!(ask["gen_ai.provider.name"], "typesafe");
+    assert_eq!(ask["gen_ai.operation.name"], "ask");
+    assert_eq!(ask["gen_ai.request.model"], "jev-latest");
+    assert_eq!(ask["gen_ai.response.model"], "jev-1.13.0");
+    assert_eq!(ask["gen_ai.usage.input_tokens"], "296");
+    assert_eq!(ask["gen_ai.usage.output_tokens"], "20");
+    assert_eq!(ask["server.address"], "127.0.0.1");
+    assert_eq!(ask["server.port"], server.address().port().to_string());
+    assert_eq!(ask["guideme.questions"], "2");
+    assert!(!ask.contains_key("guideme.state"));
+    assert!(!ask.contains_key("error.type"));
+    assert!(!ask.contains_key("otel.status_code"));
+    assert!(
+        !captured
+            .spans
+            .iter()
+            .any(|s| s.fields.values().any(|v| v.contains("secret state text")))
+    );
+    assert_eq!(captured.spans_named("guideme.ask")[0].parent, None);
+
+    let attempts = captured.spans_named("POST /v1/systemone");
+    assert_eq!(attempts.len(), 2);
+    assert!(
+        attempts
+            .iter()
+            .all(|a| a.parent.as_deref() == Some("guideme.ask"))
+    );
+    let throttled = &attempts[0].fields;
+    assert_eq!(throttled["otel.kind"], "client");
+    assert_eq!(throttled["http.request.method"], "POST");
+    assert_eq!(
+        throttled["url.full"],
+        format!("{}/v1/systemone", server.uri())
+    );
+    assert_eq!(throttled["url.template"], "/v1/systemone");
+    assert_eq!(throttled["http.response.status_code"], "429");
+    assert_eq!(throttled["error.type"], "429");
+    assert_eq!(throttled["otel.status_code"], "ERROR");
+    assert!(!throttled.contains_key("http.request.resend_count"));
+    let succeeded = &attempts[1].fields;
+    assert_eq!(succeeded["http.request.resend_count"], "1");
+    assert_eq!(succeeded["http.response.status_code"], "200");
+    assert!(!succeeded.contains_key("error.type"));
+
+    let retries = captured.events_named("guideme.retry");
+    assert_eq!(retries.len(), 1);
+    let (level, retry) = retries[0];
+    assert_eq!(*level, Level::WARN);
+    assert_eq!(retry["http.response.status_code"], "429");
+    assert_eq!(retry["guideme.retry.attempt"], "1");
+    assert_eq!(retry["guideme.retry.delay_ms"], "0");
+
+    let answers = captured.events_named("guideme.answer");
+    assert_eq!(answers.len(), 2);
+    let (level, e) = answers[0];
+    assert_eq!(*level, Level::INFO);
+    assert_eq!(e["guideme.question"], "q0");
+    assert_eq!(e["guideme.kind"], "noul");
+    assert_eq!(e["guideme.outcome"], "yes");
+    assert_eq!(e["guideme.probability"], "0.95");
+    assert_eq!(e["guideme.unsure"], "false");
+    assert_eq!(e["guideme.yes_above"], "0.5");
+    assert_eq!(e["guideme.min_confidence"], "0");
+    let (_, e) = answers[1];
+    assert_eq!(e["guideme.question"], "q1");
+    assert_eq!(e["guideme.kind"], "choice");
+    assert_eq!(e["guideme.outcome"], "billing");
+    assert_eq!(e["guideme.confidence"], "0.81");
+    assert!(!e.contains_key("guideme.probability"));
     Ok(())
 }
 
 #[tokio::test]
 async fn record_state_opts_in_to_recording_the_state() -> Result<(), Box<dyn std::error::Error>> {
     let capture = Capture::default();
-    let _guard =
-        tracing::subscriber::set_default(tracing_subscriber::registry().with(capture.clone()));
+    let _guard = install(&capture);
     let server = MockServer::start().await;
     Mock::given(method("POST"))
         .respond_with(ResponseTemplate::new(200).set_body_string(REPLY))
@@ -146,8 +240,43 @@ async fn record_state_opts_in_to_recording_the_state() -> Result<(), Box<dyn std
         .build()?;
     guide.ask(noul("Urgent?"), "visible state").await?;
     assert_eq!(
-        capture.0.lock().unwrap().span_fields["state"],
+        capture.0.lock().unwrap().span("guideme.ask")["guideme.state"],
         "\"visible state\""
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_failed_ask_marks_the_span_with_a_stable_error_type()
+-> Result<(), Box<dyn std::error::Error>> {
+    let capture = Capture::default();
+    let _guard = install(&capture);
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(REPLY))
+        .mount(&server)
+        .await;
+    let guide = Guide::builder()
+        .api_key("k".into())
+        .base_url(server.uri())
+        .build()?;
+
+    let err = guide
+        .ask(noul("Urgent?").yes_above(0.99), "state")
+        .await
+        .unwrap_err();
+    assert_eq!(err.kind(), "unsure");
+
+    let captured = capture.0.lock().unwrap();
+    let ask = captured.span("guideme.ask");
+    assert_eq!(ask["error.type"], "unsure");
+    assert_eq!(ask["otel.status_code"], "ERROR");
+    assert_eq!(ask["otel.status_description"], err.to_string());
+    assert_eq!(ask["gen_ai.response.model"], "jev-1.13.0");
+    assert!(
+        !captured
+            .span("POST /v1/systemone")
+            .contains_key("error.type")
     );
     Ok(())
 }

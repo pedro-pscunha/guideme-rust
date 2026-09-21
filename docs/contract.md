@@ -49,7 +49,10 @@ Mirror the verbs, in the idiom of the language:
   has the same shape;
 - unsure resolution in this order: the question's fallback value, the enum's fallback
   member, then a typed unsure error; the detailed reading never fails on unsure;
-- one span per `ask` and one event per answer with the fields in `docs/observability.md`.
+- telemetry with the names in `docs/observability.md`: one `guideme.ask` span per `ask` with
+  the `gen_ai.*` attributes, one HTTP client span per attempt, one `guideme.answer` event per
+  answer, and `error.type` from the same list of names. The names are the contract so that
+  one dashboard reads every SDK; how they are emitted is each language's business.
 
 Runtime option sets should return a caller-chosen type where the language allows it.
 Exhaustive matching over the enum is enforced where the language can; elsewhere, a literal
