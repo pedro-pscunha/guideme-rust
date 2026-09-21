@@ -1,0 +1,165 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# The repository is public and nothing here publishes, comments or deploys.
+permissions:
+  contents: read
+
+# Supersede in-flight PR runs; never cancel a run for a commit on main.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  gate:
+    name: gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # rust-toolchain.toml pins the channel and the components; the first proxy
+      # call is what makes rustup fetch them. Failing here names the missing piece
+      # instead of dying somewhere inside the gate.
+      - name: Resolve the toolchain pinned by rust-toolchain.toml
+        run: |
+          cargo --version
+          rustc --version
+          cargo clippy --version
+          cargo fmt --version
+
+      # mise.toml is the single source of truth for cargo-nextest and cargo-deny.
+      # Nothing is re-pinned here.
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: gate
+
+      # fmt-check, clippy -D warnings, nextest, doctests, rustdoc, cargo-deny.
+      # The live tests are #[ignore]; nextest skips them and nothing passes
+      # --run-ignored, so no API key is ever needed.
+      - name: mise run check
+        run: mise run check
+
+  # The tracked pre-commit and pre-push hooks scan for secrets, but a hook is
+  # opt-in and local. This is the copy that runs on every pull request, fork
+  # included, and on every commit that reaches main.
+  secrets:
+    name: secrets (gitleaks)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The whole history: a secret on any commit is a leak, however old.
+          fetch-depth: 0
+
+      # gitleaks' version comes from mise.toml, same as the hooks use.
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+
+      # Exit 2 is a leak, exit 1 is gitleaks failing to run. Both fail the job.
+      - name: gitleaks over the full history
+        run: gitleaks git --no-banner --redact --exit-code 2
+
+  example:
+    name: example (otlp)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: examples/otlp
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # examples/otlp has no rust-toolchain.toml of its own, so rustup walks up to
+      # the repository root and the example builds on the same pinned channel.
+      - name: Resolve the toolchain pinned by rust-toolchain.toml
+        run: |
+          cargo --version
+          rustc --version
+          cargo clippy --version
+          cargo fmt --version
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: examples/otlp
+          key: example
+
+      # Its own workspace root, so `cargo fmt --all` at the repository root never
+      # reaches it. This is the only formatting check the example gets.
+      - name: cargo fmt --check
+        run: cargo fmt --all --check
+
+      # Its own lock file too. --locked is the point: it fails when guideme moves
+      # under the example instead of silently resolving around it.
+      - name: cargo build --locked
+        run: cargo build --locked
+
+      - name: cargo clippy -D warnings
+        run: cargo clippy --locked --all-targets -- -D warnings
+
+  msrv:
+    name: msrv (1.98.0)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      # Cargo.toml claims rust-version = "1.98", so 1.98.0 is what has to build.
+      # The assert step below checks that this literal still agrees with it.
+      MSRV: 1.98.0
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # RUSTUP_TOOLCHAIN outranks rust-toolchain.toml, so exporting it here keeps
+      # every later step -- rust-cache's key included -- on the MSRV instead of
+      # quietly pulling the pinned 1.98.1 in behind it.
+      - name: Install Rust ${{ env.MSRV }}
+        run: |
+          rustup toolchain install "${MSRV}" --profile minimal --no-self-update
+          echo "RUSTUP_TOOLCHAIN=${MSRV}" >> "${GITHUB_ENV}"
+
+      # rust-toolchain.toml pins 1.98.1 and rustup honours it inside the checkout.
+      # A job that merely installs 1.98.0 would build with 1.98.1 and prove
+      # nothing, so the override is asserted before anything is compiled. The
+      # probes are bare `cargo` and `rustc` on purpose: that is what the exported
+      # RUSTUP_TOOLCHAIN has to control, and what rust-cache reads.
+      - name: Assert the override defeats rust-toolchain.toml
+        shell: bash
+        run: |
+          set -euo pipefail
+          pinned="$(sed -n 's/^channel *= *"\(.*\)"/\1/p' rust-toolchain.toml)"
+          claimed="$(sed -n 's/^rust-version *= *"\(.*\)"/\1/p' Cargo.toml)"
+          cargo_version="$(cargo --version | cut -d' ' -f2)"
+          rustc_version="$(rustc --version | cut -d' ' -f2)"
+          echo "Cargo.toml claims rust-version ${claimed}; rust-toolchain.toml pins ${pinned}; this job must use ${MSRV}"
+          echo "observed cargo ${cargo_version}, rustc ${rustc_version}"
+          case "${MSRV}" in
+            "${claimed}".*) ;;
+            *)
+              echo "::error::MSRV ${MSRV} in this workflow does not match rust-version = \"${claimed}\" in Cargo.toml"
+              exit 1
+              ;;
+          esac
+          if [ "${cargo_version}" != "${MSRV}" ] || [ "${rustc_version}" != "${MSRV}" ]; then
+            echo "::error::toolchain override failed: ${pinned} won over ${MSRV}, so this job proves nothing"
+            exit 1
+          fi
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: msrv-${{ env.MSRV }}
+
+      # +${MSRV} again, at the call site, so the build is right even if the
+      # exported RUSTUP_TOOLCHAIN is lost. No --all-targets: rust-version is a
+      # claim about building the crates, not about the dev-dependency tree.
+      - name: cargo build on ${{ env.MSRV }}
+        run: cargo "+${MSRV}" build --workspace --locked
