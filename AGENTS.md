@@ -40,8 +40,8 @@ change to any of them must land there in the same commit, and the names are part
 cross-SDK contract (see below).
 
 `examples/` holds runnable programs. Each is its own workspace root with its own lock file, so
-the gate does not build them and their dependencies stay out of the library's tree. Build one
-by running cargo inside its directory. CI does build `examples/otlp` with `--locked`, and its
+the gate formats but does not build them, and their dependencies stay out of the library's
+tree. Build one by running cargo inside its directory. CI does build `examples/otlp` with `--locked`, and its
 lock file pins `guideme` through a path dependency, so a change to the library's dependency
 set **or its version** must refresh `examples/otlp/Cargo.lock` in the same pull request:
 `cargo build` inside `examples/otlp`, without `--locked`, rewrites it.
