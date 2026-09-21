@@ -1,5 +1,5 @@
 //! The pure decision layer: thresholds in, labelled outcome out. No I/O, no generics.
-//! This is the function other-language SDKs port; `spec/vectors/policy.json` is its contract.
+//! `spec/vectors/policy.json` pins its behaviour for every guideme SDK.
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};

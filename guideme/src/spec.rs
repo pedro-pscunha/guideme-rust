@@ -1,4 +1,4 @@
-//! The porting contract: JSON Schemas for the wire and policy types, and golden vectors
+//! The shared contract: JSON Schemas for the wire and policy types, and golden vectors
 //! for [`crate::policy::resolve`]. `mise run spec` writes them to `spec/`.
 
 use std::collections::BTreeMap;

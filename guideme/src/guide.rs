@@ -88,8 +88,8 @@ impl Guide {
     /// encounter order. The call is atomic: one failing answer fails the whole call.
     pub async fn ask<A: Ask>(&self, ask: A, state: impl Into<State>) -> Result<A::Out, Error> {
         let state: State = state.into();
-        // ponytail: the state is serialised here for `state.bytes` and again by the client;
-        // fold into one pass if document-sized states show up in profiles.
+        // The state is serialised here for `state.bytes` and again by the client; fold into
+        // one pass if document-sized states show up in profiles.
         let state_json = serde_json::to_string(state.value()?).map_err(|e| Error::Config {
             detail: e.to_string(),
         })?;

@@ -1,15 +1,15 @@
 # Design
 
-`guideme` is four modules behind one verb. The vocabulary here is from the codebase-design
-skill: a **module** has an **interface** and an **implementation**; a **seam** is where the
-interface lives; a module is **deep** when a lot of behaviour sits behind a small interface.
+`guideme` is four modules behind one verb. Vocabulary used below: a **module** has an
+**interface** and an **implementation**; a **seam** is where the interface lives; a module is
+**deep** when a lot of behaviour sits behind a small interface.
 
 ## Seams
 
 | Module | Interface | What it hides |
 |---|---|---|
 | `Guide` (`guide.rs`) | `ask(shape, state)`, `models()`, `with_policy`, builder | request assembly, question-id minting, one span per request, per-answer events, policy precedence, decode of every shape |
-| `policy` (`policy.rs`) | `resolve(&Answer, Thresholds) -> Outcome`, `Policy`/`Thresholds` | threshold arithmetic for all three primitives, validation, ranking. Pure: no I/O, no generics. This is the function other SDKs port. |
+| `policy` (`policy.rs`) | `resolve(&Answer, Thresholds) -> Outcome`, `Policy`/`Thresholds` | threshold arithmetic for all three primitives, validation, ranking. Pure: no I/O, no generics. This is the function the shared contract pins. |
 | `api::Client` (`api/client.rs`) | `evaluate`, `models` | HTTP, auth header, retry with backoff and `retry-after`, status → `Error` mapping, body decode |
 | `Ask` shapes (`ask.rs`) | sealed trait over `Question<K>`, tuples, `Vec`, `BTreeMap` | id assignment in encounter order, per-question settled thresholds, decoding back into the same shape |
 | `Kind`s (`question.rs`) | `noul`, `choose`, `score`, `choose_among`, `score_levels`; `.with/.or/.detail/.criteria` and the three threshold one-liners | wire encoding per primitive, rubric membership checks, `Outcome` → typed value, the unsure ladder |
@@ -17,7 +17,7 @@ interface lives; a module is **deep** when a lot of behaviour sits behind a smal
 
 ## The deletion test
 
-- Delete `policy` and threshold logic reappears in every caller, three times (one per primitive), and the porting contract disappears.
+- Delete `policy` and threshold logic reappears in every caller, three times (one per primitive), and the shared contract disappears.
 - Delete `ask` and batching reappears as one method per shape (`batch`, `batch_all`, `batch_map`, …) with id bookkeeping in each.
 - Delete `api::client` and retry/backoff reappears wherever the API is called.
 - Delete `Guide` and span assembly, id minting, and the precedence merge reappear at every call site.

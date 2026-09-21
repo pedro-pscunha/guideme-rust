@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.0 — 2026-09-20
+## 0.1.0 (2026-09-20)
 
 First release.
 
@@ -15,4 +15,4 @@ First release.
   `.or` > enum fallback > `Error::Unsure`.
 - `api` wire mirror with `Client`: retries on `429`/`529` honouring `retry-after`, typed
   errors, `GET /v1/models`.
-- `spec/`: JSON Schemas and golden policy vectors as the porting contract.
+- `spec/`: JSON Schemas and golden policy vectors as the contract every guideme SDK satisfies.
