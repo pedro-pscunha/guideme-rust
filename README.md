@@ -1,5 +1,9 @@
 # guideme
 
+[![crates.io](https://img.shields.io/crates/v/guideme.svg)](https://crates.io/crates/guideme)
+[![docs.rs](https://docs.rs/guideme/badge.svg)](https://docs.rs/guideme)
+[![license](https://img.shields.io/crates/l/guideme.svg)](#license)
+
 Judgments from [TypeSafe Jev](https://docs.typesafe.ai) that read like Rust control flow.
 
 A yes/no question is an `if`. A choice is an exhaustive `match` over your own enum. A score is
