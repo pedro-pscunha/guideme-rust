@@ -65,6 +65,7 @@ mod guide;
 pub mod policy;
 mod question;
 mod scalars;
+#[doc(hidden)]
 pub mod spec;
 
 pub use ask::Ask;
@@ -73,7 +74,7 @@ pub use guide::{Guide, GuideBuilder};
 pub use guideme_derive::{Choice, Levels};
 pub use policy::{Policy, Thresholds, Verdict};
 pub use question::{
-    Choose, Detailed, Fallible, Key, Kind, Levels, Noul, Options, Question, Rank, Ranked, Score,
-    Scored, choose, choose_among, noul, score, score_levels,
+    Binary, Choose, Confident, Detailed, Fallible, Key, Kind, Levels, Noul, Options, Question,
+    Rank, Ranked, Score, Scored, choose, choose_among, noul, score, score_levels,
 };
 pub use scalars::{ApiKey, Confidence, Instructions, Model, Probability, State};

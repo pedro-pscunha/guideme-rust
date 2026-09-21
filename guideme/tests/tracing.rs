@@ -9,7 +9,7 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
-use guideme::{Guide, noul};
+use guideme::{Guide, Key, choose_among, noul};
 use tracing::field::{Field, Visit};
 use tracing::span::{Attributes, Id, Record};
 use tracing::{Event, Subscriber};
@@ -65,7 +65,7 @@ impl<S: Subscriber> Layer<S> for Capture {
     }
 }
 
-const REPLY: &str = r#"{"model":"jev-1.13.0","answers":{"q0":{"type":"noul","noul":0.95}},"usage":{"input_tokens":296,"output_tokens":20}}"#;
+const REPLY: &str = r#"{"model":"jev-1.13.0","answers":{"q0":{"type":"noul","noul":0.95},"q1":{"type":"choice","choice":"billing","probabilities":{"billing":0.88,"sales":0.12},"confidence":0.81}},"usage":{"input_tokens":296,"output_tokens":20}}"#;
 
 #[tokio::test]
 async fn the_ask_span_carries_typed_fields_and_never_the_state_by_default()
@@ -84,14 +84,23 @@ async fn the_ask_span_carries_typed_fields_and_never_the_state_by_default()
         .base_url(server.uri())
         .build()?;
 
-    let yes = guide.ask(noul("Urgent?"), "secret state text").await?;
+    let (yes, team) = guide
+        .ask(
+            (
+                noul("Urgent?"),
+                choose_among("Team?", [("billing", None), ("sales", None)]),
+            ),
+            "secret state text",
+        )
+        .await?;
     assert!(yes);
+    assert_eq!(team, Key("billing".into()));
 
     let captured = capture.0.lock().unwrap();
     let f = &captured.span_fields;
     assert_eq!(f["model.requested"], "jev-latest");
     assert_eq!(f["model.answered"], "jev-1.13.0");
-    assert_eq!(f["questions"], "1");
+    assert_eq!(f["questions"], "2");
     assert_eq!(f["usage.input_tokens"], "296");
     assert_eq!(f["usage.output_tokens"], "20");
     assert_eq!(f["retries"], "0");
@@ -99,7 +108,7 @@ async fn the_ask_span_carries_typed_fields_and_never_the_state_by_default()
     assert!(!f.contains_key("state"));
     assert!(!f.values().any(|v| v.contains("secret state text")));
 
-    assert_eq!(captured.events.len(), 1);
+    assert_eq!(captured.events.len(), 2);
     let e = &captured.events[0];
     assert_eq!(e["question"], "q0");
     assert_eq!(e["kind"], "noul");
@@ -108,6 +117,12 @@ async fn the_ask_span_carries_typed_fields_and_never_the_state_by_default()
     assert_eq!(e["unsure"], "false");
     assert_eq!(e["yes_above"], "0.5");
     assert_eq!(e["min_confidence"], "0");
+    let e = &captured.events[1];
+    assert_eq!(e["question"], "q1");
+    assert_eq!(e["kind"], "choice");
+    assert_eq!(e["outcome"], "billing");
+    assert_eq!(e["confidence"], "0.81");
+    assert!(!e.contains_key("probability"));
     Ok(())
 }
 

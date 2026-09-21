@@ -1,0 +1,5 @@
+error: guideme: #[guide(key)] is not allowed on Levels; levels are positional
+ --> tests/ui/key_on_levels.rs:4:13
+  |
+4 |     #[guide(key = "lo")]
+  |             ^^^

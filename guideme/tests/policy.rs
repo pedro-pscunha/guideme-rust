@@ -117,6 +117,19 @@ fn malformed_answers_are_protocol_errors() {
         confidence: 1.0f64.try_into().unwrap(),
     };
     assert!(matches!(resolve(&eleven, t), Err(Error::Protocol { .. })));
+
+    let out_of_range = Answer::Score {
+        score: 5.0,
+        legend: (0u8..3).map(|i| (i, format!("L{i}"))).collect(),
+        probabilities: (0u8..3)
+            .map(|i| (i, p(if i == 0 { 1.0 } else { 0.0 })))
+            .collect(),
+        confidence: 1.0f64.try_into().unwrap(),
+    };
+    assert!(matches!(
+        resolve(&out_of_range, t),
+        Err(Error::Protocol { .. })
+    ));
 }
 
 #[test]

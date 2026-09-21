@@ -70,7 +70,7 @@ if urgent || mood.value > 1.5 { prioritise(); }
 | Layer | How | Wins over |
 |---|---|---|
 | question | `.with(Policy)`, `.yes_above(p)`, `.no_below(p)`, `.min_confidence(c)` | guide |
-| guide | `Guide::builder().policy(..)`, `guide.with_policy(..)` | defaults |
+| guide | `Guide::builder().policy(..)`, `guide.with_policy(..)?` (validated on the spot) | defaults |
 | defaults | `yes_above 0.5`, `no_below 0.5`, `min_confidence 0.0` | — |
 
 Noul: `p >= yes_above` is yes, `p <= no_below` is no, in between is unsure. Choice and score:
@@ -107,8 +107,10 @@ Runtime rubrics: `choose_among(q, [("key", Some("rubric")), …])` returns `Key`
 ## Development
 
 `mise run check` is the gate: fmt, clippy (pedantic, no `unwrap`/`panic` in `src`), nextest,
-doctests, rustdoc, cargo-deny. `mise run hooks` installs lefthook (pre-commit: fmt + clippy;
-pre-push: the gate). `mise run spec` regenerates `spec/`. The live contract test is opt-in:
+doctests, rustdoc, cargo-deny. `mise run hooks` installs lefthook stubs into the repo's hooks dir (pre-commit: fmt + clippy;
+pre-push: the gate). If a global `core.hooksPath` is set, git runs only that directory: the
+pre-commit stub is reached when the global hook chains to it, and pre-push only if the global
+directory has a `pre-push` that chains too; otherwise run `mise run check` before pushing. `mise run spec` regenerates `spec/`. The live contract test is opt-in:
 `TYPESAFE_API_KEY=… cargo nextest run -p guideme --test live --run-ignored ignored-only`.
 
 Docs: `docs/design.md`, `docs/observability.md`, `docs/porting.md`.

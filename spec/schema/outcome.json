@@ -64,7 +64,7 @@
       ]
     },
     {
-      "description": "Score.",
+      "description": "Score. Levels are positional: index `i` of `distribution` and `legend` is level `i`.",
       "type": "object",
       "properties": {
         "confidence": {
@@ -72,22 +72,10 @@
           "$ref": "#/$defs/Confidence"
         },
         "distribution": {
-          "description": "Probabilities in level order.",
+          "description": "Probability of each level, in level order.",
           "type": "array",
           "items": {
-            "type": "array",
-            "maxItems": 2,
-            "minItems": 2,
-            "prefixItems": [
-              {
-                "type": "integer",
-                "format": "uint",
-                "minimum": 0
-              },
-              {
-                "$ref": "#/$defs/Probability"
-              }
-            ]
+            "$ref": "#/$defs/Probability"
           }
         },
         "index": {
@@ -101,13 +89,10 @@
           "const": "score"
         },
         "legend": {
-          "description": "Level index → description.",
-          "type": "object",
-          "additionalProperties": false,
-          "patternProperties": {
-            "^\\d+$": {
-              "type": "string"
-            }
+          "description": "Description of each level, in level order.",
+          "type": "array",
+          "items": {
+            "type": "string"
           }
         },
         "unsure": {

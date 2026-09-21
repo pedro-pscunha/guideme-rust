@@ -27,7 +27,7 @@ Each module survives the test.
 
 ## Decisions
 
-- **Questions are values.** `noul(..)`, `choose::<C>(..)`, `score::<L>(..)` need no `Guide`; they can be constants, stored, cloned across threads. The `Guide` is only an executor.
+- **Questions are values.** `noul(..)`, `choose::<C>(..)`, `score::<L>(..)` need no `Guide`; build one once, store it, clone it per ask, send it across threads. The `Guide` is only an executor and consumes the question it is given.
 - **One verb.** `guide.ask(shape, state)`. Question first, state second, so `if guide.ask(noul("…"), &t)` reads with the judgment early.
 - **Batching is the shape.** A tuple of questions is a question. So is a `Vec` or a `BTreeMap`. Output has the same shape. One request, one span, ids `q0..qN` in encounter order.
 - **Policy is a patch; thresholds are settled.** `Policy` has `Option` fields and `const fn` setters, so house policies are constants. Precedence: question > guide > defaults `0.5 / 0.5 / 0.0`. `Thresholds` is validated on construction and is what `resolve` and the golden vectors take.

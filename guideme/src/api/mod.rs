@@ -12,6 +12,11 @@ use serde::{Deserialize, Serialize};
 
 pub use client::{Client, ClientBuilder};
 
+/// Most options a choice may carry.
+pub const MAX_OPTIONS: usize = 255;
+/// Most levels a score may carry.
+pub const MAX_LEVELS: usize = 10;
+
 use crate::{Confidence, Instructions, Model, Probability, State};
 
 /// Identifies a question inside one request. Never sent to the model.

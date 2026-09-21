@@ -19,6 +19,17 @@ STUB
   echo "installed $hooks_dir/$hook"
 done
 
-if git config --get core.hooksPath >/dev/null 2>&1; then
-  echo "note: core.hooksPath is set globally; pre-commit chains here, pre-push only if that dir chains it too"
+hooks_path="$(git config --get core.hooksPath || true)"
+if [ -n "$hooks_path" ]; then
+  dead=0
+  for hook in pre-commit pre-push; do
+    if ! grep -qs "hooks/$hook" "$hooks_path/$hook"; then
+      echo "error: core.hooksPath=$hooks_path has no $hook that chains to the repo hook; the $hook gate is DEAD" >&2
+      dead=1
+    fi
+  done
+  if [ "$dead" -eq 1 ]; then
+    echo "add a chaining hook there, or run 'mise run check' by hand before pushing" >&2
+    exit 1
+  fi
 fi

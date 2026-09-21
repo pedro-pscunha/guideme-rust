@@ -9,10 +9,10 @@ pub enum Error {
     /// `401`: missing or invalid API key.
     #[error("unauthorized: missing or invalid TypeSafe API key")]
     Auth,
-    /// `422`: the request body failed validation. `detail` is the API's own message.
+    /// `422`: the request body failed validation. `detail` is the verbatim response body.
     #[error("invalid request: {detail}")]
     Invalid {
-        /// The API's description of the offending field.
+        /// The response body, JSON envelope included; it names the offending field.
         detail: String,
     },
     /// `429` after every retry was used.

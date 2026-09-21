@@ -128,7 +128,8 @@ async fn unsure_without_fallback_fails_the_whole_call_naming_the_question() {
     let server = MockServer::start().await;
     let guide = guide(&server, REPLY)
         .await
-        .with_policy(Policy::new().min_confidence(0.6));
+        .with_policy(Policy::new().min_confidence(0.6))
+        .unwrap();
     let err = guide
         .ask((noul("urgent?"), choose::<Department>("team?")), "x")
         .await
@@ -145,7 +146,7 @@ async fn unsure_ladder_or_beats_enum_fallback_beats_error_and_detail_never_fails
             .yes_above(0.7)
             .no_below(0.3)
             .min_confidence(0.9),
-    );
+    )?;
     let (v, a, b, c, d, e, f) = guide
         .ask(
             (

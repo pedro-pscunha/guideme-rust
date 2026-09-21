@@ -25,8 +25,9 @@ The rules, in words:
 - Choice: `unsure = confidence < min_confidence`; `ranked` is options by descending
   probability, ties by key; the API's `choice` must be present in the distribution.
 - Score: `index` is the argmax (ties → lowest); `value` is the API's `score`; `unsure` as
-  above; `legend` and `probabilities` must be the same contiguous `0..n` with `2 <= n <= 10`
-  and `score` within `0..=n-1`.
+  above; the answer's `legend` and `probabilities` must be the same contiguous `0..n` with
+  `2 <= n <= 10` and `score` within `0..=n-1`. The outcome's `distribution` and `legend` are
+  positional arrays: element `i` is level `i`.
 
 Thresholds are valid when every field is in `0..=1` and `no_below <= yes_above`. Policy
 patches merge question > guide > defaults `{yes_above: 0.5, no_below: 0.5, min_confidence: 0.0}`.

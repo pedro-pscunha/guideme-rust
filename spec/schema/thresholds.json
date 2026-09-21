@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Thresholds",
-  "description": "Fully settled, validated thresholds. What [`resolve`] and every golden vector take.",
+  "description": "Fully settled, validated thresholds: the input of `resolve` and of every golden vector.",
   "type": "object",
   "properties": {
     "min_confidence": {

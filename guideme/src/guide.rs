@@ -67,15 +67,18 @@ impl Guide {
     }
 
     /// A guide sharing this client with `policy` patched over this guide's policy.
-    pub fn with_policy(&self, policy: Policy) -> Guide {
-        Guide {
+    /// Validated now, like [`GuideBuilder::build`], so a bad patch fails where it is written.
+    pub fn with_policy(&self, policy: Policy) -> Result<Guide, Error> {
+        let policy = policy.over(self.inner.policy);
+        policy.settle()?;
+        Ok(Guide {
             inner: Arc::new(Inner {
                 client: self.inner.client.clone(),
                 model: self.inner.model.clone(),
-                policy: policy.over(self.inner.policy),
+                policy,
                 record_state: self.inner.record_state,
             }),
-        }
+        })
     }
 
     /// Answer `ask` about `state` in exactly one request and one `guideme.ask` span.
@@ -85,6 +88,8 @@ impl Guide {
     /// encounter order. The call is atomic: one failing answer fails the whole call.
     pub async fn ask<A: Ask>(&self, ask: A, state: impl Into<State>) -> Result<A::Out, Error> {
         let state: State = state.into();
+        // ponytail: the state is serialised here for `state.bytes` and again by the client;
+        // fold into one pass if document-sized states show up in profiles.
         let state_json = serde_json::to_string(state.value()?).map_err(|e| Error::Config {
             detail: e.to_string(),
         })?;
@@ -106,6 +111,7 @@ impl Guide {
             usage.output_tokens = field::Empty,
             retries = field::Empty,
             elapsed_ms = field::Empty,
+            error = field::Empty,
         );
         if self.inner.record_state {
             span.record("state", state_json.as_str());
@@ -116,32 +122,45 @@ impl Guide {
             model: self.inner.model.clone(),
             questions: plan.questions,
         };
-        let (response, retries) = self
+        let result = self
             .inner
             .client
             .evaluate_counted(&request)
             .instrument(span.clone())
-            .await?;
-        span.record("model.answered", response.model.as_str());
-        span.record("usage.input_tokens", response.usage.input_tokens);
-        span.record("usage.output_tokens", response.usage.output_tokens);
-        span.record("retries", retries);
+            .await;
         span.record(
             "elapsed_ms",
             u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
         );
+        let (response, retries) = match result {
+            Ok(ok) => ok,
+            Err(e) => {
+                span.record("error", field::display(&e));
+                return Err(e);
+            }
+        };
+        span.record("model.answered", response.model.as_str());
+        span.record("usage.input_tokens", response.usage.input_tokens);
+        span.record("usage.output_tokens", response.usage.output_tokens);
+        span.record("retries", retries);
 
         let _entered = span.enter();
-        let mut outcomes = BTreeMap::new();
-        for (id, t) in plan.thresholds {
-            let answer = response.answers.get(&id).ok_or_else(|| Error::Protocol {
-                detail: format!("no answer for question {}", id.as_str()),
-            })?;
-            let outcome = policy::resolve(answer, t)?;
-            emit(&id, &outcome, t);
-            outcomes.insert(id, (outcome, t));
+        let decoded = (|| {
+            let mut outcomes = BTreeMap::new();
+            for (id, t) in plan.thresholds {
+                let answer = response.answers.get(&id).ok_or_else(|| Error::Protocol {
+                    detail: format!("no answer for question {}", id.as_str()),
+                })?;
+                let outcome = policy::resolve(answer, t)?;
+                emit(&id, &outcome, t);
+                outcomes.insert(id, (outcome, t));
+            }
+            A::decode(claim, &Reply { outcomes })
+        })();
+        if let Err(e) = &decoded {
+            span.record("error", field::display(e));
         }
-        A::decode(claim, &Reply { outcomes })
+        decoded
     }
 
     /// Models the account may use.
@@ -237,7 +256,7 @@ impl GuideBuilder {
         self.max_retries = n;
         self
     }
-    /// Per-request timeout; default 30 s.
+    /// Timeout per attempt; default 30 s.
     pub fn timeout(mut self, d: Duration) -> Self {
         self.timeout = d;
         self

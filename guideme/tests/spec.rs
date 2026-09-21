@@ -8,6 +8,10 @@
 
 use std::path::Path;
 
+use guideme::Error;
+use guideme::api::Answer;
+use guideme::policy::{Outcome, Thresholds, resolve};
+
 #[test]
 fn committed_spec_matches_render() -> Result<(), Box<dyn std::error::Error>> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spec");
@@ -28,6 +32,18 @@ fn committed_spec_matches_render() -> Result<(), Box<dyn std::error::Error>> {
                     .iter()
                     .all(|v| v.get("outcome").is_some() ^ v.get("error").is_some())
             );
+            for v in &vectors {
+                let answer: Answer = serde_json::from_value(v["answer"].clone())?;
+                let t: Thresholds = serde_json::from_value(v["thresholds"].clone())?;
+                match (resolve(&answer, t), v.get("outcome")) {
+                    (Ok(got), Some(want)) => {
+                        let want: Outcome = serde_json::from_value(want.clone())?;
+                        assert_eq!(got, want, "{rel}: vector drifted");
+                    }
+                    (Err(Error::Protocol { .. }), None) => assert_eq!(v["error"], "protocol"),
+                    (r, o) => panic!("{rel}: {r:?} vs {o:?}"),
+                }
+            }
         }
     }
     Ok(())

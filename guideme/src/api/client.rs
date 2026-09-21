@@ -56,18 +56,25 @@ impl Client {
     }
 
     /// `POST /v1/systemone`, also reporting how many retries were spent.
+    ///
+    /// A `retry-after` longer than 30 s is not waited for: the call fails with
+    /// [`Error::RateLimited`] carrying that duration, so the caller decides.
     pub(crate) async fn evaluate_counted(
         &self,
         request: &Request,
     ) -> Result<(Response, u32), Error> {
         let url = format!("{}/v1/systemone", self.base_url);
+        let body = serde_json::to_vec(request).map_err(|e| Error::Config {
+            detail: format!("request is not serialisable: {e}"),
+        })?;
         let mut retry_after = None;
         for attempt in 0..=self.max_retries {
             let response = self
                 .http
                 .post(&url)
                 .bearer_auth(self.api_key.expose())
-                .json(request)
+                .header(reqwest::header::CONTENT_TYPE, "application/json")
+                .body(body.clone())
                 .send()
                 .await
                 .map_err(transport)?;
@@ -76,35 +83,22 @@ impl Client {
                 200 => return decode::<Response>(response).await.map(|r| (r, attempt)),
                 429 | 529 => {
                     retry_after = parse_retry_after(&response);
-                    if attempt == self.max_retries {
+                    if attempt == self.max_retries || retry_after.is_some_and(|d| d > MAX_BACKOFF) {
                         return Err(if status == 429 {
                             Error::RateLimited { retry_after }
                         } else {
                             Error::Overloaded
                         });
                     }
-                    let wait =
-                        retry_after.map_or_else(|| self.delay(attempt), |d| d.min(MAX_BACKOFF));
-                    tokio::time::sleep(wait).await;
+                    tokio::time::sleep(retry_after.unwrap_or_else(|| self.delay(attempt))).await;
                 }
-                401 => return Err(Error::Auth),
-                422 => {
-                    return Err(Error::Invalid {
-                        detail: response.text().await.map_err(transport)?,
-                    });
-                }
-                other => {
-                    return Err(Error::UnexpectedStatus {
-                        status: other,
-                        body: response.text().await.map_err(transport)?,
-                    });
-                }
+                other => return Err(classify(other, response).await),
             }
         }
         Err(Error::RateLimited { retry_after })
     }
 
-    /// `GET /v1/models`.
+    /// `GET /v1/models`. Not retried.
     pub async fn models(&self) -> Result<Vec<ModelInfo>, Error> {
         let url = format!("{}/v1/models", self.base_url);
         let response = self
@@ -116,11 +110,11 @@ impl Client {
             .map_err(transport)?;
         match response.status().as_u16() {
             200 => Ok(decode::<ModelsResponse>(response).await?.models),
-            401 => Err(Error::Auth),
-            other => Err(Error::UnexpectedStatus {
-                status: other,
-                body: response.text().await.map_err(transport)?,
+            429 => Err(Error::RateLimited {
+                retry_after: parse_retry_after(&response),
             }),
+            529 => Err(Error::Overloaded),
+            other => Err(classify(other, response).await),
         }
     }
 
@@ -155,7 +149,7 @@ impl ClientBuilder {
         self.backoff = d;
         self
     }
-    /// Per-request timeout.
+    /// Timeout per attempt. Worst case wall time is `(max_retries + 1) × timeout` plus backoff.
     pub fn timeout(mut self, d: Duration) -> Self {
         self.timeout = d;
         self
@@ -173,6 +167,22 @@ impl ClientBuilder {
             max_retries: self.max_retries,
             backoff: self.backoff,
         })
+    }
+}
+
+/// Non-retryable statuses: `401` and `422` are typed, anything else is unexpected.
+async fn classify(status: u16, response: reqwest::Response) -> Error {
+    let body = match response.text().await {
+        Ok(text) => text,
+        Err(e) => return transport(e),
+    };
+    match status {
+        401 => Error::Auth,
+        422 => Error::Invalid { detail: body },
+        other => Error::UnexpectedStatus {
+            status: other,
+            body,
+        },
     }
 }
 

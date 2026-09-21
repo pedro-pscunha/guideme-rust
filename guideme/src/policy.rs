@@ -1,16 +1,17 @@
 //! The pure decision layer: thresholds in, labelled outcome out. No I/O, no generics.
 //! This is the function other-language SDKs port; `spec/vectors/policy.json` is its contract.
 
-use std::collections::BTreeMap;
-
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::api::Answer;
+use crate::api::{Answer, MAX_LEVELS};
 use crate::{Confidence, Error, Probability};
 
 /// A policy patch. Unset fields defer to the next layer (guide, then crate defaults).
+///
+/// Build with [`Policy::new`] and the `const fn` setters; house policies can be constants.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[non_exhaustive]
 pub struct Policy {
     /// Noul: `p >= yes_above` is yes.
     pub yes_above: Option<f64>,
@@ -63,7 +64,7 @@ impl Policy {
     }
 }
 
-/// Fully settled, validated thresholds. What [`resolve`] and every golden vector take.
+/// Fully settled, validated thresholds: the input of `resolve` and of every golden vector.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(try_from = "ThresholdsRepr")]
 pub struct Thresholds {
@@ -173,7 +174,7 @@ pub enum Outcome {
         /// Options by descending probability, ties by key.
         ranked: Vec<(String, Probability)>,
     },
-    /// Score.
+    /// Score. Levels are positional: index `i` of `distribution` and `legend` is level `i`.
     Score {
         /// Argmax of the distribution; ties go to the lowest index.
         index: usize,
@@ -183,10 +184,10 @@ pub enum Outcome {
         confidence: Confidence,
         /// `confidence < min_confidence`.
         unsure: bool,
-        /// Probabilities in level order.
-        distribution: Vec<(usize, Probability)>,
-        /// Level index → description.
-        legend: BTreeMap<usize, String>,
+        /// Probability of each level, in level order.
+        distribution: Vec<Probability>,
+        /// Description of each level, in level order.
+        legend: Vec<String>,
     },
 }
 
@@ -241,10 +242,10 @@ pub fn resolve(answer: &Answer, t: Thresholds) -> Result<Outcome, Error> {
                     .enumerate()
                     .all(|(i, k)| usize::from(*k) == i)
                 && probabilities.len() == n;
-            if !(2..=10).contains(&n) || !contiguous {
+            if !(2..=MAX_LEVELS).contains(&n) || !contiguous {
                 return Err(Error::Protocol {
                     detail: format!(
-                        "score legend/probabilities must be contiguous levels 0..n with 2 <= n <= 10, got {n}"
+                        "score legend/probabilities must be contiguous levels 0..n with 2 <= n <= {MAX_LEVELS}, got {n}"
                     ),
                 });
             }
@@ -268,14 +269,8 @@ pub fn resolve(answer: &Answer, t: Thresholds) -> Result<Outcome, Error> {
                 value: *score,
                 confidence: *confidence,
                 unsure: confidence.get() < t.min_confidence,
-                distribution: probabilities
-                    .iter()
-                    .map(|(k, p)| (usize::from(*k), *p))
-                    .collect(),
-                legend: legend
-                    .iter()
-                    .map(|(k, v)| (usize::from(*k), v.clone()))
-                    .collect(),
+                distribution: probabilities.values().copied().collect(),
+                legend: legend.values().cloned().collect(),
             })
         }
     }

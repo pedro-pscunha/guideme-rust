@@ -1,9 +1,10 @@
 //! Questions as values: build them anywhere, ask them through a [`crate::Guide`].
 
 use std::collections::BTreeMap;
+use std::fmt;
 use std::marker::PhantomData;
 
-use crate::api::{self, NoulCriteria};
+use crate::api::{self, MAX_LEVELS, MAX_OPTIONS, NoulCriteria};
 use crate::policy::{Outcome, Thresholds, Verdict};
 use crate::{Confidence, Error, Instructions, Policy, Probability};
 
@@ -113,30 +114,46 @@ pub trait Fallible: Kind {
     -> Result<Self::Detail, Error>;
 }
 
+/// Kinds judged by a yes/no probability: `yes_above` / `no_below` apply.
+pub trait Binary: Kind {}
+
+/// Kinds judged by a reported confidence: `min_confidence` applies.
+pub trait Confident: Kind {}
+
 /// Yes/no.
+#[derive(Clone, Debug)]
 pub struct Noul {
     criteria: Option<NoulCriteria>,
 }
 
 /// One of `C`'s options.
+#[derive(Clone, Debug)]
 pub struct Choose<C: Options> {
     rubric: Vec<(String, Option<String>)>,
     _c: PhantomData<fn() -> C>,
 }
 
 /// A level of `L`.
+#[derive(Clone, Debug)]
 pub struct Score<L: Levels> {
     levels: Vec<String>,
     _l: PhantomData<fn() -> L>,
 }
 
 /// `K` with the detailed output. Never fails on unsure.
+#[derive(Clone, Debug)]
 pub struct Detailed<K: Fallible>(K);
 
 impl sealed::Sealed for Noul {}
 impl<C: Options> sealed::Sealed for Choose<C> {}
 impl<L: Levels> sealed::Sealed for Score<L> {}
 impl<K: Fallible> sealed::Sealed for Detailed<K> {}
+
+impl Binary for Noul {}
+impl Binary for Detailed<Noul> {}
+impl<C: Options> Confident for Choose<C> {}
+impl<L: Levels> Confident for Score<L> {}
+impl<K: Fallible + Confident> Confident for Detailed<K> {}
 
 fn mismatch(id: &str, want: &str, got: &Outcome) -> Error {
     let got = match got {
@@ -208,9 +225,9 @@ impl<C: Options> Kind for Choose<C> {
                 detail: "a choice needs at least one option".into(),
             });
         }
-        if self.rubric.len() > 255 {
+        if self.rubric.len() > MAX_OPTIONS {
             return Err(Error::Config {
-                detail: "a choice may have at most 255 options".into(),
+                detail: format!("a choice may have at most {MAX_OPTIONS} options"),
             });
         }
         let criteria: BTreeMap<String, Option<String>> = self.rubric.iter().cloned().collect();
@@ -251,6 +268,15 @@ impl<C: Options> Fallible for Choose<C> {
         else {
             return Err(mismatch(id, "choice", &outcome));
         };
+        if ranked.len() != self.rubric.len() {
+            return Err(Error::Protocol {
+                detail: format!(
+                    "question {id}: answer has {} options, rubric has {}",
+                    ranked.len(),
+                    self.rubric.len()
+                ),
+            });
+        }
         let map = |k: &str| {
             if !self.rubric.iter().any(|(r, _)| r == k) {
                 return Err(Error::Protocol {
@@ -276,9 +302,12 @@ impl<C: Options> Fallible for Choose<C> {
 impl<L: Levels> Kind for Score<L> {
     type Out = L;
     fn wire(&self, instructions: Instructions) -> Result<api::Question, Error> {
-        if !(2..=10).contains(&self.levels.len()) {
+        if !(2..=MAX_LEVELS).contains(&self.levels.len()) {
             return Err(Error::Config {
-                detail: format!("a score needs 2..=10 levels, got {}", self.levels.len()),
+                detail: format!(
+                    "a score needs 2..={MAX_LEVELS} levels, got {}",
+                    self.levels.len()
+                ),
             });
         }
         Ok(api::Question::Score {
@@ -331,7 +360,8 @@ impl<L: Levels> Fallible for Score<L> {
             unsure,
             distribution: distribution
                 .iter()
-                .map(|(i, p)| Ok((map(*i)?, *p)))
+                .enumerate()
+                .map(|(i, p)| Ok((map(i)?, *p)))
                 .collect::<Result<_, Error>>()?,
         })
     }
@@ -353,7 +383,8 @@ impl<K: Fallible> Kind for Detailed<K> {
     }
 }
 
-/// A question plus its local policy patch. Inert until a [`crate::Guide`] asks it.
+/// A question plus its local policy patch. Inert until a [`crate::Guide`] asks it; build it
+/// once and clone it per ask.
 ///
 /// Not to be confused with [`crate::api::Question`], the wire enum this turns into.
 pub struct Question<K: Kind> {
@@ -363,21 +394,55 @@ pub struct Question<K: Kind> {
     pub(crate) or: Option<K::Out>,
 }
 
+impl<K: Kind + Clone> Clone for Question<K>
+where
+    K::Out: Clone,
+{
+    fn clone(&self) -> Self {
+        Self {
+            instructions: self.instructions.clone(),
+            kind: self.kind.clone(),
+            policy: self.policy,
+            or: self.or.clone(),
+        }
+    }
+}
+
+impl<K: Kind + fmt::Debug> fmt::Debug for Question<K>
+where
+    K::Out: fmt::Debug,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Question")
+            .field("instructions", &self.instructions)
+            .field("kind", &self.kind)
+            .field("policy", &self.policy)
+            .field("or", &self.or)
+            .finish()
+    }
+}
+
 impl<K: Kind> Question<K> {
     /// Merge a policy patch over this question's. Precedence: question > guide > crate defaults.
     pub fn with(mut self, policy: Policy) -> Self {
         self.policy = policy.over(self.policy);
         self
     }
-    /// Noul: `p >= yes_above` is yes.
+}
+
+impl<K: Binary> Question<K> {
+    /// `p >= yes_above` is yes.
     pub fn yes_above(self, p: f64) -> Self {
         self.with(Policy::new().yes_above(p))
     }
-    /// Noul: `p <= no_below` is no.
+    /// `p <= no_below` is no.
     pub fn no_below(self, p: f64) -> Self {
         self.with(Policy::new().no_below(p))
     }
-    /// Choice/score: `confidence < min_confidence` is unsure.
+}
+
+impl<K: Confident> Question<K> {
+    /// `confidence < min_confidence` is unsure.
     pub fn min_confidence(self, c: f64) -> Self {
         self.with(Policy::new().min_confidence(c))
     }
@@ -390,6 +455,7 @@ impl<K: Fallible> Question<K> {
         self
     }
     /// Ask for the full reading (`Verdict` / `Ranked<C>` / `Scored<L>`); never fails on unsure.
+    /// Any `.or(..)` set before this call is dropped: the detailed reading never needs it.
     pub fn detail(self) -> Question<Detailed<K>> {
         Question {
             instructions: self.instructions,

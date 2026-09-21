@@ -16,6 +16,7 @@
 | `usage.output_tokens` | u64 | free tokens |
 | `retries` | u64 | `429`/`529` retries performed |
 | `elapsed_ms` | u64 | wall time including retries |
+| `error` | str | the `Error` display, only when the ask failed |
 
 State is user data and is never recorded unless opted in. The API key never appears in any
 span, event, or `Debug` output.

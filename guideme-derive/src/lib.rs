@@ -61,6 +61,11 @@ fn variants(input: &DeriveInput, derive: &str) -> Result<Vec<Variant>> {
         for attr in v.attrs.iter().filter(|a| a.path().is_ident("guide")) {
             attr.parse_nested_meta(|meta| {
                 if meta.path.is_ident("key") {
+                    if derive == "Levels" {
+                        return Err(meta.error(
+                            "guideme: #[guide(key)] is not allowed on Levels; levels are positional",
+                        ));
+                    }
                     key = meta.value()?.parse::<LitStr>()?.value();
                 } else if meta.path.is_ident("rubric") {
                     rubric = Some(meta.value()?.parse::<LitStr>()?.value());
