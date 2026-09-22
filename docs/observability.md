@@ -110,8 +110,10 @@ server — a refused or reset connection, a TLS handshake failure — has no sta
 carries `error.type = "transport"` instead. Those are retried inside the same budget and with
 the same backoff, because the request went nowhere. A timeout of any phase and a body failure
 are not retried, so they never produce a retry event: they mark the attempt's span and are
-returned. The attempt's own span is marked failed with `error.type = "transport"` either way,
-as it already was for a transport failure that was not retried.
+returned. A client handed in through `ClientBuilder::http` brings its own classification: a
+`connect_timeout` set on it does make connect timeouts retryable, and those do produce a retry
+event. The attempt's own span is marked failed with `error.type = "transport"` either way, as
+it already was for a transport failure that was not retried.
 
 The message is `429 from TypeSafe, retrying in 1000 ms`, or `could not reach TypeSafe,
 retrying in 500 ms`.
