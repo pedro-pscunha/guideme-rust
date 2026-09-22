@@ -297,7 +297,9 @@ struct RubricCase {
 /// Build the rubric vector by reading `RUBRIC` and `LEVELS` off real derived enums, so the
 /// published cases are what the macro emits rather than a second copy of the algorithm.
 fn rubric_cases() -> Result<Vec<RubricCase>, Error> {
-    let mut out = Vec::with_capacity(CHOICE_PARTS.len() + COUNTER_PARTS.len() + LEVEL_PARTS.len());
+    let mut out = Vec::with_capacity(
+        CHOICE_PARTS.len() + COUNTER_PARTS.len() + LEVEL_PARTS.len() + NOUL_PARTS.len(),
+    );
     push_choice(&mut out, SpecChoice::RUBRIC, &CHOICE_PARTS)?;
     push_choice(&mut out, SpecChoiceCounter::RUBRIC, &COUNTER_PARTS)?;
     if SpecLevel::LEVELS.len() != LEVEL_PARTS.len() {
@@ -309,7 +311,7 @@ fn rubric_cases() -> Result<Vec<RubricCase>, Error> {
         out.push(rubric_case("levels", what, examples, &[], rendered)?);
     }
     for (what, examples, counterexamples) in NOUL_PARTS {
-        let rendered = rubric(what, examples, counterexamples).into_wire()?;
+        let rendered = rubric(what, examples, counterexamples).render()?;
         out.push(RubricCase {
             kind: "noul",
             what,
@@ -376,7 +378,7 @@ fn rubric_case(
     counterexamples: &'static [&'static str],
     rendered: &'static str,
 ) -> Result<RubricCase, Error> {
-    let from_rubric = rubric(what, examples, counterexamples).into_wire()?;
+    let from_rubric = rubric(what, examples, counterexamples).render()?;
     if from_rubric != rendered {
         return Err(Error::Config {
             detail: format!(
