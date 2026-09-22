@@ -69,9 +69,11 @@ itself. A rubric written as a bare string puts the same bytes on the wire as it 
 `spec/vectors/rubric.json` is the golden set; every case carries `what`, `examples`,
 `counterexamples` and the `rendered` result, and every SDK must reproduce each `rendered`
 exactly. Every case also carries `kind` — `"choice"`, `"levels"` or `"noul"` — naming the
-question kind the rubric sits in. A level never renders a counterexample clause: a level is a position on a scale, not
-an option to rule out, and an example under a level *is* the statement that such an input
-scores there — no numeric annotation is added to the text.
+question kind the rubric sits in. Nothing rendered from a level's declared parts carries a
+counterexample clause, because a level is a position on a scale rather than an option to rule
+out; that is why a counterexample on a level is refused outright, below. An example under a
+level *is* the statement that such an input scores there — no numeric annotation is added to
+the text.
 
 Where the rendering happens is each language's business, and the SDKs differ on purpose. Rust
 renders inside `#[derive(Choice)]` / `#[derive(Levels)]` at expansion time, because
@@ -89,9 +91,14 @@ Declaration-time validation is shared. Rejected loudly: an empty or whitespace-o
 counterexample; a duplicate string within one option's examples or within its counterexamples;
 the same string as an example of two different options, or of two different levels, since it
 cannot belong to both; and the same string as both an example and a counterexample of the same
-option. The same string as an example of one option and a counterexample of **another** is
-legitimate and must stay legal — it is exactly the confusable-options pattern this feature
-exists for.
+option; and a counterexample on a **level**, since an ordered scale has no "not this option".
+The same string as an example of one option and a counterexample of **another** is legitimate
+and must stay legal — it is exactly the confusable-options pattern this feature exists for.
+
+Python also refuses an **empty clause written out** — `examples=[]`, where the caller wrote the
+clause and put nothing in it. Rust's attribute surface has no spelling for that: a variant
+either carries `#[guide(example = "…")]` or it does not, so the rule has no Rust counterpart.
+It is absent there because it is inexpressible, not because it goes unenforced.
 
 **Validation is over the declared items, not the rendered text.** That one rule explains the
 rest: `["a; b"]` renders exactly like `["a", "b"]` and still passes the duplicate and
