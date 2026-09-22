@@ -154,7 +154,8 @@ async fn unsure_ladder_or_beats_enum_fallback_beats_error_and_detail_never_fails
                 choose::<Team>("q").or(Team::Billing),
                 choose::<Team>("q"),
                 choose::<Team>("q").detail(),
-                choose_among("q", [("billing", None), ("sales", None)]).or(Key("sales".into())),
+                choose_among("q", [("billing", None::<&str>), ("sales", None)])
+                    .or(Key("sales".into())),
                 score_levels("q", ["low", "high"]).or(Rank(0)),
                 noul("q").or(false),
             ),
@@ -175,7 +176,7 @@ async fn an_option_outside_the_rubric_is_a_protocol_error() {
     let err = guide.ask(choose::<Team>("q"), "x").await.unwrap_err();
     assert!(matches!(err, guideme::Error::Protocol { .. }));
     let err = guide
-        .ask(choose_among("q", [("billing", None)]), "x")
+        .ask(choose_among("q", [("billing", None::<&str>)]), "x")
         .await
         .unwrap_err();
     assert!(matches!(err, guideme::Error::Protocol { .. }));

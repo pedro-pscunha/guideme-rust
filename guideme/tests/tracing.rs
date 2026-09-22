@@ -140,7 +140,7 @@ async fn one_ask_is_one_span_with_an_http_span_per_attempt()
         .ask(
             (
                 noul("Urgent?"),
-                choose_among("Team?", [("billing", None), ("sales", None)]),
+                choose_among("Team?", [("billing", None::<&str>), ("sales", None)]),
             ),
             "secret state text",
         )
