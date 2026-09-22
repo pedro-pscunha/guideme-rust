@@ -14,6 +14,7 @@ use super::{ModelInfo, ModelsResponse, Request, Response};
 use crate::{ApiKey, Error};
 
 const DEFAULT_BASE_URL: &str = "https://api.typesafe.ai";
+const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_BACKOFF: Duration = Duration::from_secs(30);
 const JITTER_MS: u64 = 250;
 const TARGET: &str = "guideme::api";
@@ -37,7 +38,8 @@ pub struct ClientBuilder {
     base_url: String,
     max_retries: u32,
     backoff: Duration,
-    timeout: Duration,
+    timeout: Option<Duration>,
+    http: Option<reqwest::Client>,
 }
 
 impl Client {
@@ -53,7 +55,8 @@ impl Client {
             base_url: DEFAULT_BASE_URL.to_owned(),
             max_retries: 3,
             backoff: Duration::from_millis(500),
-            timeout: Duration::from_secs(30),
+            timeout: None,
+            http: None,
         }
     }
 
@@ -225,15 +228,42 @@ impl ClientBuilder {
         self.backoff = d;
         self
     }
-    /// Timeout per attempt. Worst case wall time is `(max_retries + 1) × timeout` plus backoff.
+    /// Timeout per attempt; default 30 s. Worst case wall time is `(max_retries + 1) × timeout`
+    /// plus backoff.
     pub fn timeout(mut self, d: Duration) -> Self {
-        self.timeout = d;
+        self.timeout = Some(d);
+        self
+    }
+    /// Send through this `reqwest` client instead of one built here: a proxy, a client
+    /// certificate, a connection pool shared with the rest of the application, or a transport
+    /// that answers without a network.
+    ///
+    /// The deadline belongs to the client handed in, so setting
+    /// [`timeout`](ClientBuilder::timeout) as well is [`Error::Config`] at build time rather
+    /// than a silent override. Everything else — the base URL, the retry budget and the
+    /// backoff — is guideme's and still applies.
+    pub fn http(mut self, client: reqwest::Client) -> Self {
+        self.http = Some(client);
         self
     }
     /// Build the client. Fails if the base URL has no host or port, or carries credentials:
     /// the URL is recorded on every request span as `url.full`, which must never hold a
-    /// secret.
+    /// secret. Also fails when a timeout is set beside an injected client.
     pub fn build(self) -> Result<Client, Error> {
+        let http = match self.http {
+            Some(http) => {
+                if self.timeout.is_some() {
+                    return Err(Error::Config {
+                        detail: "timeout(..) and http(..) both set the request deadline; set it on the reqwest client you hand to http(..)".into(),
+                    });
+                }
+                http
+            }
+            None => reqwest::Client::builder()
+                .timeout(self.timeout.unwrap_or(DEFAULT_TIMEOUT))
+                .build()
+                .map_err(transport)?,
+        };
         let parsed = reqwest::Url::parse(&self.base_url).map_err(|e| Error::Config {
             detail: format!("base_url {:?}: {e}", self.base_url),
         })?;
@@ -247,10 +277,6 @@ impl ClientBuilder {
                 detail: format!("base_url {:?} needs a host and a port", self.base_url),
             });
         };
-        let http = reqwest::Client::builder()
-            .timeout(self.timeout)
-            .build()
-            .map_err(transport)?;
         Ok(Client {
             http,
             host: host.to_owned(),

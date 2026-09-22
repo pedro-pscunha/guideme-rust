@@ -72,9 +72,10 @@ mod scalars;
 #[doc(hidden)]
 pub mod spec;
 
+pub use api::{ModelInfo, Usage};
 pub use ask::Ask;
 pub use error::Error;
-pub use guide::{Guide, GuideBuilder};
+pub use guide::{Guide, GuideBuilder, Receipt};
 pub use guideme_derive::{Choice, Levels};
 pub use policy::{Policy, Thresholds, Verdict};
 pub use question::{

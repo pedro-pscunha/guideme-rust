@@ -6,12 +6,28 @@ use std::time::Duration;
 
 use tracing::{Instrument, field, info_span};
 
-use crate::api::{Client, ModelInfo, QuestionId, Request};
+use crate::api::{Client, ModelInfo, QuestionId, Request, Usage};
 use crate::ask::{Ask, Plan, Reply};
 use crate::policy::{self, Outcome, Thresholds, Verdict};
 use crate::{ApiKey, Error, Model, Policy, State};
 
 const TARGET: &str = "guideme";
+
+/// An answer with what the request cost and which model produced it.
+///
+/// [`Guide::ask`] is this with everything but the answer dropped; [`Guide::ask_with_receipt`]
+/// keeps it. The two fields beside the answer are what the TypeSafe docs tell you to log: the
+/// billed token count, and the versioned id to pin your thresholds to.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Receipt<T> {
+    /// The answer, in the shape that was asked for.
+    pub answer: T,
+    /// The versioned model that answered, for example `jev-1.13.0`, even when an alias such as
+    /// `jev-latest` was requested.
+    pub model: Model,
+    /// Tokens read and written. Input tokens are the billed ones.
+    pub usage: Usage,
+}
 
 /// A configured entry point to Jev. Cheap to clone; share it.
 #[derive(Clone, Debug)]
@@ -32,28 +48,22 @@ struct Inner {
 pub struct GuideBuilder {
     api_key: Option<ApiKey>,
     base_url: Option<String>,
+    client: Option<Client>,
     model: Model,
     policy: Policy,
-    max_retries: u32,
-    backoff: Duration,
-    timeout: Duration,
+    max_retries: Option<u32>,
+    backoff: Option<Duration>,
+    timeout: Option<Duration>,
     record_state: bool,
 }
 
 impl Guide {
     /// Read `TYPESAFE_API_KEY` (required), `TYPESAFE_BASE_URL` and `GUIDEME_MODEL` (optional).
+    ///
+    /// The one-liner. [`GuideBuilder::from_env`] is the same reading on a builder you are
+    /// still configuring.
     pub fn from_env() -> Result<Self, Error> {
-        let key = std::env::var("TYPESAFE_API_KEY").map_err(|_| Error::Config {
-            detail: "TYPESAFE_API_KEY is not set".into(),
-        })?;
-        let mut b = Self::builder().api_key(ApiKey::from(key));
-        if let Ok(url) = std::env::var("TYPESAFE_BASE_URL") {
-            b = b.base_url(url);
-        }
-        if let Ok(model) = std::env::var("GUIDEME_MODEL") {
-            b = b.model(Model::new(model));
-        }
-        b.build()
+        Self::builder().from_env()?.build()
     }
 
     /// Start configuring a guide.
@@ -61,11 +71,12 @@ impl Guide {
         GuideBuilder {
             api_key: None,
             base_url: None,
+            client: None,
             model: Model::latest(),
             policy: Policy::new(),
-            max_retries: 3,
-            backoff: Duration::from_millis(500),
-            timeout: Duration::from_secs(30),
+            max_retries: None,
+            backoff: None,
+            timeout: None,
             record_state: false,
         }
     }
@@ -91,6 +102,22 @@ impl Guide {
     /// `BTreeMap` of shapes; the output has the same shape. Question ids are `q0..qN` in
     /// encounter order. The call is atomic: one failing answer fails the whole call.
     pub async fn ask<A: Ask>(&self, ask: A, state: impl Into<State>) -> Result<A::Out, Error> {
+        self.ask_with_receipt(ask, state)
+            .await
+            .map(|receipt| receipt.answer)
+    }
+
+    /// [`ask`](Guide::ask), keeping what the response said about itself: which versioned model
+    /// answered and what the call cost.
+    ///
+    /// Same request, same span, same fields; `ask` is this with everything but the answer
+    /// dropped. Reach for it to attribute cost, or to pin thresholds to the model version that
+    /// produced them.
+    pub async fn ask_with_receipt<A: Ask>(
+        &self,
+        ask: A,
+        state: impl Into<State>,
+    ) -> Result<Receipt<A::Out>, Error> {
         let state: State = state.into();
         // The state is serialised here for `guideme.state.bytes` and again by the client; fold
         // into one pass if document-sized states show up in profiles.
@@ -171,10 +198,12 @@ impl Guide {
             }
             A::decode(claim, &Reply { outcomes })
         });
-        if let Err(e) = &decoded {
-            fail(&span, e);
-        }
-        decoded
+        let answer = decoded.inspect_err(|e| fail(&span, e))?;
+        Ok(Receipt {
+            answer,
+            model: response.model,
+            usage: response.usage,
+        })
     }
 
     /// Models the account may use.
@@ -293,7 +322,29 @@ fn emit(id: &QuestionId, outcome: &Outcome, t: Thresholds) {
 }
 
 impl GuideBuilder {
-    /// The API key. Required unless built by [`Guide::from_env`].
+    /// Read `TYPESAFE_API_KEY` (required), `TYPESAFE_BASE_URL` and `GUIDEME_MODEL` (optional),
+    /// and leave everything else on this builder alone.
+    ///
+    /// `Guide::builder().from_env()?.policy(HOUSE).build()?` is the shape this exists for.
+    /// [`Guide::from_env`] is the one-liner when there is nothing else to set.
+    ///
+    /// # Errors
+    /// [`Error::Config`] when `TYPESAFE_API_KEY` is not set.
+    pub fn from_env(self) -> Result<Self, Error> {
+        let key = std::env::var("TYPESAFE_API_KEY").map_err(|_| Error::Config {
+            detail: "TYPESAFE_API_KEY is not set".into(),
+        })?;
+        let mut builder = self.api_key(ApiKey::from(key));
+        if let Ok(url) = std::env::var("TYPESAFE_BASE_URL") {
+            builder = builder.base_url(url);
+        }
+        if let Ok(model) = std::env::var("GUIDEME_MODEL") {
+            builder = builder.model(Model::new(model));
+        }
+        Ok(builder)
+    }
+    /// The API key. Required unless [`from_env`](GuideBuilder::from_env) or
+    /// [`client`](GuideBuilder::client) supplies one.
     pub fn api_key(mut self, key: ApiKey) -> Self {
         self.api_key = Some(key);
         self
@@ -301,6 +352,17 @@ impl GuideBuilder {
     /// Override the API origin.
     pub fn base_url(mut self, url: impl Into<String>) -> Self {
         self.base_url = Some(url.into());
+        self
+    }
+    /// Send through this [`Client`] instead of building one from the settings below.
+    ///
+    /// Use it to hand in a configured transport — a proxy, a client certificate, a shared
+    /// connection pool — through [`api::ClientBuilder::http`](crate::api::ClientBuilder::http).
+    /// The client already carries the API key, the base URL, the retry budget, the backoff and
+    /// the timeout, so setting any of those here as well is [`Error::Config`] at build time
+    /// rather than a setting that quietly does nothing.
+    pub fn client(mut self, client: Client) -> Self {
+        self.client = Some(client);
         self
     }
     /// The model or alias; default `jev-latest`.
@@ -315,18 +377,18 @@ impl GuideBuilder {
     }
     /// Retries for `429`, `529` and a failure to connect; default 3.
     pub fn max_retries(mut self, n: u32) -> Self {
-        self.max_retries = n;
+        self.max_retries = Some(n);
         self
     }
     /// Base delay for exponential backoff; default 500 ms. The wait is `backoff * 2^attempt`
     /// plus jitter, capped at 30 s, and a `retry-after` the API sends wins over it.
     pub fn backoff(mut self, d: Duration) -> Self {
-        self.backoff = d;
+        self.backoff = Some(d);
         self
     }
     /// Timeout per attempt; default 30 s.
     pub fn timeout(mut self, d: Duration) -> Self {
-        self.timeout = d;
+        self.timeout = Some(d);
         self
     }
     /// Record the state JSON on the span. Off by default: state is user data.
@@ -336,20 +398,49 @@ impl GuideBuilder {
     }
     /// Build. Validates the policy now so a bad house policy fails at startup.
     pub fn build(self) -> Result<Guide, Error> {
-        let key = self.api_key.ok_or_else(|| Error::Config {
-            detail: "api_key is required".into(),
-        })?;
+        let client = if let Some(client) = self.client {
+            let ignored: Vec<&str> = [
+                ("api_key", self.api_key.is_some()),
+                ("base_url", self.base_url.is_some()),
+                ("max_retries", self.max_retries.is_some()),
+                ("backoff", self.backoff.is_some()),
+                ("timeout", self.timeout.is_some()),
+            ]
+            .into_iter()
+            .filter_map(|(name, was_set)| was_set.then_some(name))
+            .collect();
+            if !ignored.is_empty() {
+                return Err(Error::Config {
+                    detail: format!(
+                        "client(..) already carries the API key, the base URL and the retry, backoff and timeout settings, so {} would do nothing here; set it on api::Client::builder instead",
+                        ignored.join(", ")
+                    ),
+                });
+            }
+            client
+        } else {
+            let key = self.api_key.ok_or_else(|| Error::Config {
+                detail: "api_key is required".into(),
+            })?;
+            let mut client = Client::builder(key);
+            if let Some(n) = self.max_retries {
+                client = client.max_retries(n);
+            }
+            if let Some(d) = self.backoff {
+                client = client.backoff(d);
+            }
+            if let Some(d) = self.timeout {
+                client = client.timeout(d);
+            }
+            if let Some(url) = self.base_url {
+                client = client.base_url(url);
+            }
+            client.build()?
+        };
         self.policy.settle()?;
-        let mut client = Client::builder(key)
-            .max_retries(self.max_retries)
-            .backoff(self.backoff)
-            .timeout(self.timeout);
-        if let Some(url) = self.base_url {
-            client = client.base_url(url);
-        }
         Ok(Guide {
             inner: Arc::new(Inner {
-                client: client.build()?,
+                client,
                 model: self.model,
                 policy: self.policy,
                 record_state: self.record_state,
