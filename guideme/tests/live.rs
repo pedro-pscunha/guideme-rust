@@ -240,9 +240,9 @@ enum GuidedTopic {
 
 #[tokio::test]
 #[ignore = "hits the live TypeSafe API; needs TYPESAFE_API_KEY"]
-async fn examples_move_the_distribution_towards_the_option_they_belong_to()
+async fn examples_move_the_answer_towards_what_they_describe()
 -> Result<(), Box<dyn std::error::Error>> {
-    use guideme::{Guide, choose};
+    use guideme::{Guide, Rubric, Verdict, choose, noul};
 
     if std::env::var("TYPESAFE_API_KEY").is_err() {
         eprintln!("TYPESAFE_API_KEY not set; skipping");
@@ -277,5 +277,38 @@ async fn examples_move_the_distribution_towards_the_option_they_belong_to()
         .unwrap();
     eprintln!("return_status: bare {bare_p} -> guided {guided_p}");
     assert!(guided_p > bare_p);
+
+    // A noul's criteria are as confusable as a choice's options, and this is where examples
+    // swing hardest: the ticket describes a broken job that already has a manual workaround,
+    // which is one of the `false` examples, so naming it pulls the answer down.
+    let ticket = "Our nightly export job has been failing since Tuesday. We pull the numbers \
+                  by hand for now.";
+    let urgent = noul("Is this ticket urgent?");
+    let plain = guide
+        .ask(
+            urgent.clone().criteria("Urgent", "Not urgent").detail(),
+            ticket,
+        )
+        .await?;
+    let told = guide
+        .ask(
+            urgent
+                .criteria(
+                    Rubric::new("Urgent")
+                        .example("the checkout page is down for every customer")
+                        .example("money is moving to the wrong account"),
+                    Rubric::new("Not urgent")
+                        .example("a broken job with a manual workaround")
+                        .example("a cosmetic bug"),
+                )
+                .detail(),
+            ticket,
+        )
+        .await?;
+    let p = |verdict: &Verdict| match verdict {
+        Verdict::Yes(p) | Verdict::No(p) | Verdict::Unsure(p) => p.get(),
+    };
+    eprintln!("urgent: plain {} -> told {}", p(&plain), p(&told));
+    assert!(p(&told) < p(&plain));
     Ok(())
 }
