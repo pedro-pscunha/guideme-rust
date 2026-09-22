@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Documentation
+
+- README rewritten for clarity, in plain English, with the section order that every guideme SDK
+  shares. Design notes, measurements and contributor details now live only in `docs/design.md`,
+  `docs/observability.md`, `docs/contract.md`, `AGENTS.md` and `CONTRIBUTING.md`, which already
+  recorded them. The README lists the TypeScript SDK. The crates.io page keeps the 0.2.0 README
+  until the next release.
+
 ## 0.2.0 (2026-09-22)
 
 ### Breaking
