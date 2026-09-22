@@ -2,7 +2,7 @@
 
 Every guideme SDK is written from scratch in its own language. What they share is this
 contract, published by this repository under `spec/`. An SDK is a guideme SDK when it
-satisfies the three parts below.
+satisfies the four parts below.
 
 ## 1. Wire fidelity
 
@@ -35,12 +35,55 @@ Thresholds are valid when every field is in `0..=1` and `no_below <= yes_above`.
 patches merge question over guide over the defaults
 `{yes_above: 0.5, no_below: 0.5, min_confidence: 0.0}`.
 
-## 3. Interface shape
+## 3. Rubric rendering
+
+An option or a level may carry **examples** — inputs that belong to it — and an option may
+carry **counterexamples**, inputs that do not. They are composed into the rubric string the
+API already takes rather than sent as the API's structured `criteria` objects;
+`docs/design.md` records why. The composition is byte-for-byte shared:
+
+```
+render(what, examples, counterexamples) -> string:
+    if examples is empty and counterexamples is empty:
+        return what
+    lines = [what]
+    if examples:
+        lines.append("Examples: " + join(examples, "; "))
+    if counterexamples:
+        lines.append("Not this option: " + join(counterexamples, "; "))
+    return join(lines, "\n")
+```
+
+Clauses are joined with a newline, items within a clause with `"; "`. No terminal punctuation
+is added, and `what` is used verbatim: never trimmed, never re-punctuated.
+
+**The load-bearing invariant:** with no examples and no counterexamples the output is `what`
+itself. A rubric written as a bare string puts the same bytes on the wire as it did in 0.1.0.
+
+`spec/vectors/rubric.json` is the golden set; every case carries `what`, `examples`,
+`counterexamples` and the `rendered` result, and every SDK must reproduce each `rendered`
+exactly. A level never renders a counterexample clause: a level is a position on a scale, not
+an option to rule out, and an example under a level *is* the statement that such an input
+scores there — no numeric annotation is added to the text.
+
+Where the rendering happens is each language's business, and the SDKs differ on purpose. Rust
+renders inside `#[derive(Choice)]` / `#[derive(Levels)]` at expansion time, so `choose_among`
+and `score_levels` take an already-rendered string. Python renders where a rubric becomes wire
+text, so `choose_among()` and `score_levels()` accept an `option()` / `level()` value directly.
+Equivalent inputs produce identical wire bytes either way; only the convenience differs.
+
+Declaration-time validation is shared: an empty or whitespace-only rubric, an empty example or
+counterexample, and a duplicate string within one option's examples or counterexamples are all
+rejected loudly. The same string as an example of one option and a counterexample of another is
+legitimate, and is exactly the confusable-options pattern this feature exists for.
+
+## 4. Interface shape
 
 Mirror the verbs, in the idiom of the language:
 
 - constructors for a yes/no question, a choice over an enum, a score over an ordered enum,
   a choice over runtime options, and a score over runtime levels;
+- a way to attach examples to an option or a level, and counterexamples to an option;
 - question methods to patch the policy, set `yes_above` and `no_below` on nouls, set
   `min_confidence` on choice and score, set a fallback value, describe what yes and no mean
   on a noul, and switch to the detailed reading;

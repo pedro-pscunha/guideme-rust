@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.1.1 (2026-09-21)
+
+- `#[guide(example = "…")]` and `#[guide(counterexample = "…")]`, both repeatable, compose a
+  variant's rubric into the text the model reads: an `Examples:` line and a `Not this option:`
+  line, items joined with `; `. `counterexample` is a `Choice` key only. The derive renders the
+  string at expansion time, so `Options::RUBRIC`, `Levels::LEVELS`, the wire and the schemas are
+  unchanged. A rubric with no examples and no counterexamples renders to itself, byte for byte,
+  so every 0.1.0 declaration puts the same bytes on the wire.
+- Declaration-time checks, each a compile error naming the rule: an empty or whitespace-only
+  rubric, an empty example or counterexample, a duplicate within one variant's examples, an
+  example on a variant with no rubric, and `counterexample` on a `Levels` derive.
+- `spec/vectors/rubric.json`: the rendering is a cross-SDK contract item, published as golden
+  cases generated from real derived enums. `spec/schema/` and `spec/vectors/policy.json` are
+  byte-identical to 0.1.0.
+
 ## 0.1.0 (2026-09-21)
 
 First release.

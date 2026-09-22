@@ -30,7 +30,7 @@ The live TypeSafe docs are the source of truth for the wire contract, over two p
 | `guideme/src/ask.rs` | the `Ask` shape trait (question, tuple, `Vec`, `BTreeMap`) | sealed; ids are `q0..qN` in encounter order |
 | `guideme/src/guide.rs` | `Guide::ask`, spans and events | one `guideme.ask` span per request, one `guideme.answer` event per question; span fields follow the OpenTelemetry GenAI conventions, anything else is namespaced `guideme.` |
 | `guideme/src/spec.rs`, `src/bin/spec.rs` | schemas and golden vectors under `spec/` | regenerate with `mise run spec`; the drift test fails otherwise |
-| `guideme-derive/src/lib.rs` | the two derives | every misuse is a compile error with a message naming the rule |
+| `guideme-derive/src/lib.rs` | the two derives and the rubric rendering | every misuse is a compile error with a message naming the rule; the rendered rubric is a cross-SDK contract item |
 
 `docs/design.md` records the decisions and the sharp edges. Update it when a decision changes.
 
@@ -148,6 +148,12 @@ Run everything from the repo root. Capture long output to a file; do not pipe a 
 4. `mise run spec`, commit the regenerated `spec/`.
 5. `mise run check`.
 6. Note it in `CHANGELOG.md` and open an issue in each other SDK repository citing the new spec commit.
+
+Changing how a rubric renders is a contract change too: the composition in `guideme-derive` is
+shared with every other SDK, so it goes through `docs/contract.md`, `spec/vectors/rubric.json`
+and `CHANGELOG.md`. A rubric with no examples and no counterexamples must keep rendering to
+itself, byte for byte; that invariant is what makes every declaration written before the
+feature put the same bytes on the wire.
 
 Renaming, adding or removing a span or event field is also a contract change: it goes through
 `docs/observability.md`, `docs/contract.md` and `CHANGELOG.md`, and is announced the same way.
