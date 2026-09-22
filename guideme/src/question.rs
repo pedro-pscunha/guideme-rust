@@ -6,6 +6,7 @@ use std::marker::PhantomData;
 
 use crate::api::{self, MAX_LEVELS, MAX_OPTIONS, NoulCriteria};
 use crate::policy::{Outcome, Thresholds, Verdict};
+use crate::rubric::{self, IntoRubric, Rubric};
 use crate::{Confidence, Error, Instructions, Policy, Probability};
 
 pub(crate) mod sealed {
@@ -123,7 +124,7 @@ pub trait Confident: Kind {}
 /// Yes/no.
 #[derive(Clone, Debug)]
 pub struct Noul {
-    criteria: Option<NoulCriteria>,
+    criteria: Option<(Rubric, Rubric)>,
 }
 
 /// One of `C`'s options.
@@ -177,9 +178,16 @@ fn unsure<T>(id: &str, value: f64, threshold: f64, or: Option<T>) -> Result<T, E
 impl Kind for Noul {
     type Out = bool;
     fn wire(&self, instructions: Instructions) -> Result<api::Question, Error> {
+        let criteria = match &self.criteria {
+            Some((yes, no)) => {
+                let (yes, no) = rubric::render_pair(yes, no)?;
+                Some(NoulCriteria { yes, no })
+            }
+            None => None,
+        };
         Ok(api::Question::Noul {
             instructions,
-            criteria: self.criteria.clone(),
+            criteria,
         })
     }
     fn read(
@@ -467,12 +475,10 @@ impl<K: Fallible> Question<K> {
 }
 
 impl Question<Noul> {
-    /// Describe what a yes and a no mean.
-    pub fn criteria(mut self, yes: impl Into<String>, no: impl Into<String>) -> Self {
-        self.kind.criteria = Some(NoulCriteria {
-            yes: yes.into(),
-            no: no.into(),
-        });
+    /// Describe what a yes and a no mean. Takes a description, or a [`Rubric`] carrying
+    /// examples.
+    pub fn criteria(mut self, yes: impl IntoRubric, no: impl IntoRubric) -> Self {
+        self.kind.criteria = Some((yes.into_rubric(), no.into_rubric()));
         self
     }
 }

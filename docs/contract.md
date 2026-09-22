@@ -2,7 +2,7 @@
 
 Every guideme SDK is written from scratch in its own language. What they share is this
 contract, published by this repository under `spec/`. An SDK is a guideme SDK when it
-satisfies the three parts below.
+satisfies the four parts below.
 
 ## 1. Wire fidelity
 
@@ -35,12 +35,129 @@ Thresholds are valid when every field is in `0..=1` and `no_below <= yes_above`.
 patches merge question over guide over the defaults
 `{yes_above: 0.5, no_below: 0.5, min_confidence: 0.0}`.
 
-## 3. Interface shape
+## 3. Rubric rendering
+
+An option, a level, or either side of a noul's criteria may carry **examples** — inputs that
+belong to it — and an option or a noul criterion may carry **counterexamples**, inputs that do
+not. All three question kinds take them: a noul's `true`/`false` criteria are exactly as
+confusable as a choice's options, and measured the largest swing of the three. They are composed into the rubric string the
+API already takes rather than sent as the API's structured `criteria` objects;
+`docs/design.md` records why. The composition is byte-for-byte shared:
+
+```
+render(what, examples, counterexamples) -> string:
+    if examples is empty and counterexamples is empty:
+        return what
+    lines = [what]
+    if examples:
+        lines.append("Examples: " + join(examples, "; "))
+    if counterexamples:
+        lines.append("Not this option: " + join(counterexamples, "; "))
+    return join(lines, "\n")
+```
+
+Clauses are joined with a newline, items within a clause with `"; "`. No terminal punctuation
+is added, and `what` is used verbatim: never trimmed, never re-punctuated. Examples and
+counterexamples render in **declaration order**, always — two SDKs ordering differently would
+produce different bytes for the same declaration, so this is contract, not presentation. The
+`Not this option` label is contract for the same reason; it is also the best of the three
+labels measured.
+
+**The load-bearing invariant:** with no examples and no counterexamples the output is `what`
+itself. A rubric written as a bare string puts the same bytes on the wire as it did in 0.1.0.
+
+`spec/vectors/rubric.json` is the golden set; every case carries `what`, `examples`,
+`counterexamples` and the `rendered` result, and every SDK must reproduce each `rendered`
+exactly. Every case also carries `kind` — `"choice"`, `"levels"` or `"noul"` — naming the
+question kind the rubric sits in. Nothing rendered from a level's declared parts carries a
+counterexample clause, because a level is a position on a scale rather than an option to rule
+out; that is why a counterexample on a level is refused outright, below. An example under a
+level *is* the statement that such an input scores there — no numeric annotation is added to
+the text.
+
+Where the rendering happens is each language's business, and the SDKs differ on purpose. Rust
+renders inside `#[derive(Choice)]` / `#[derive(Levels)]` at expansion time, because
+`Options::RUBRIC` is a `const` and cannot call a function, and offers `Rubric` for the rubric
+positions that are not an enum. Rust has no unchecked way to render one: `Rubric::render`
+returns `Result`, and there is deliberately no `Display`, so a caller feeding a rubric into the
+`&str` constructors gets the checks rather than bypassing them. Python renders where a rubric
+becomes wire text, so
+`choose_among()` and `score_levels()` accept an `option()` / `level()` value directly, while
+Rust's equivalents keep taking `&str` and a caller passes a pre-rendered string; widening them
+risks inference breakage for existing callers and is deferred to 0.2.0. Equivalent inputs
+produce identical wire bytes either way; only the convenience differs.
+
+Declaration-time validation is shared. Rejected loudly: an empty or whitespace-only example or
+counterexample; a duplicate string within one option's examples or within its counterexamples;
+the same string as an example of two different options, or of two different levels, since it
+cannot belong to both; and the same string as both an example and a counterexample of the same
+option; and a counterexample on a **level**, since an ordered scale has no "not this option".
+The same string as an example of one option and a counterexample of **another** is legitimate
+and must stay legal — it is exactly the confusable-options pattern this feature exists for.
+
+Python also refuses an **empty clause written out** — `examples=[]`, where the caller wrote the
+clause and put nothing in it. Rust's attribute surface has no spelling for that: a variant
+either carries `#[guide(example = "…")]` or it does not, so the rule has no Rust counterpart.
+It is absent there because it is inexpressible, not because it goes unenforced.
+
+**Validation is over the declared items, not the rendered text.** That one rule explains the
+rest: `["a; b"]` renders exactly like `["a", "b"]` and still passes the duplicate and
+shared-example checks, `" a"` is not `"a"`, and `"A"` is not `"a"`. No SDK normalises, and none
+should start.
+
+What the rules guarantee is **rendering integrity, not input trust**: a string an SDK renders
+from declared parts carries exactly the clauses those parts declared. Rubric text itself is
+trusted and is not sanitised, and a rubric handed to a runtime constructor as an
+already-rendered string is passed through as written.
+
+Three definitions follow, because they are the kind of thing two SDKs drift on silently:
+
+- **Empty or whitespace-only** means the string is empty once characters with the Unicode
+  `White_Space` property are removed from both ends. That is exactly Rust's `str::trim`.
+  Python's `str.strip()` is a *superset*: it also strips the C0 separators `U+001C`–`U+001F`,
+  which `White_Space` does not include, so a rubric of a single `U+001C` is blank to Python and
+  not to Rust. The boundary is stated rather than resolved, because the characters involved are
+  unreachable from a keyboard. An SDK that wants to match exactly should trim on `White_Space`.
+- **Duplicate detection is exact string equality**, with no trimming, case folding or Unicode
+  normalisation. `"a"` and `" a"` are two different examples and both are legal. Only the
+  emptiness check trims, so the two rules deliberately disagree about what `" a"` is.
+- **An example or counterexample may not contain `U+000A` or `U+000D`.** Items are joined onto
+  one line with `"; "`, so a line break in one would render as a clause boundary the
+  declaration never wrote. The check is `contains` over exactly those two code points — never a
+  language's line-splitting primitive (`str::lines`, `str.splitlines`) and never a
+  control-character class, because those cover different sets and would leave two SDKs
+  disagreeing about `U+2028`, `U+0085` and the rest. Those are deliberately **not** refused:
+  they are `White_Space`, so they are already blank on their own, and embedded they are
+  harmless. A `what` may contain anything, line breaks included; only items are constrained.
+  Where a rubric breaks this rule and the blank-rubric rule at once, the blank one is reported.
+
+Items are inserted verbatim: nothing is escaped, and the rendering is not required to be
+reversible — a reader cannot in general recover the item list from the rendered string, and no
+SDK should try. An item containing `"; "`, or one whose text is literally
+`"Not this option: x"`, is documented rather than refused. Both change what a reader sees
+*inside* a clause, while a line break changes *which clause* they are in, and only the second
+can forge a `Not this option:` the declaration never wrote. That is the whole of the
+refused-versus-documented line; it is not two arbitrary decisions.
+
+An empty or whitespace-only rubric is rejected **only where examples were attached to it** —
+you described nothing. A rubric that carries neither keeps whatever an SDK did before this
+feature existed, because rejecting it would be a new error for a declaration that has nothing
+to do with examples. Every rule above that a single rubric can see holds on the runtime paths
+too, wherever the language cannot reach a declaration: Python refuses them when the rubric is
+constructed, Rust returns `Error::Config` when the question carrying it is asked. The rules
+that compare two options need more than one rubric in view, so where they can be applied
+differs: a noul holds its `true` and `false` rubrics together and both SDKs reject an example
+shared by the two, while a choice built from runtime options has no such moment in Rust and the
+rule is compile-time only there. The must-allow overlap is never rejected anywhere.
+
+## 4. Interface shape
 
 Mirror the verbs, in the idiom of the language:
 
 - constructors for a yes/no question, a choice over an enum, a score over an ordered enum,
   a choice over runtime options, and a score over runtime levels;
+- a way to attach examples to an option, a level and a noul criterion, and counterexamples to
+  an option and a noul criterion;
 - question methods to patch the policy, set `yes_above` and `no_below` on nouls, set
   `min_confidence` on choice and score, set a fallback value, describe what yes and no mean
   on a noul, and switch to the detailed reading;

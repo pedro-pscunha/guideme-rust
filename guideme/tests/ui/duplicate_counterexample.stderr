@@ -1,0 +1,5 @@
+error: guideme: duplicate #[guide(counterexample = "The dashboard is down")] on this variant
+ --> tests/ui/duplicate_counterexample.rs:6:26
+  |
+6 |         counterexample = "The dashboard is down"
+  |                          ^^^^^^^^^^^^^^^^^^^^^^^

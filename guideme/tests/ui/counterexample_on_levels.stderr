@@ -1,0 +1,5 @@
+error: guideme: #[guide(counterexample)] is not allowed on Levels; a level is a position on a scale, not an option to rule out
+ --> tests/ui/counterexample_on_levels.rs:4:13
+  |
+4 |     #[guide(counterexample = "a blocking outage")]
+  |             ^^^^^^^^^^^^^^

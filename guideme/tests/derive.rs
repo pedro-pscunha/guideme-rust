@@ -18,6 +18,10 @@ enum Department {
     #[guide(fallback)]
     Sales,
     NoRubric,
+    // A blank rubric is meaningless, and still compiles: 0.1.1 rejects it only where examples
+    // were attached to it, so a declaration written before examples existed is untouched.
+    #[guide(rubric = "")]
+    EmptyRubric,
 }
 
 #[derive(Levels, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -39,6 +43,7 @@ fn choice_rubric_keys_and_fallback_come_from_the_enum() {
             ("tech", Some("Bugs, outages, integrations")),
             ("sales", Some("Pricing, upgrades, new accounts")),
             ("no_rubric", None),
+            ("empty_rubric", Some("")),
         ]
     );
     assert_eq!(Department::fallback(), Some(Department::Sales));
@@ -50,11 +55,12 @@ fn choice_rubric_keys_and_fallback_come_from_the_enum() {
 
 #[test]
 fn choice_key_round_trips_every_variant() {
-    const IN_ORDER: [Department; 4] = [
+    const IN_ORDER: [Department; 5] = [
         Department::Billing,
         Department::Technical,
         Department::Sales,
         Department::NoRubric,
+        Department::EmptyRubric,
     ];
     for (i, (key, _)) in Department::RUBRIC.iter().enumerate() {
         assert_eq!(Department::from_key(key), Some(IN_ORDER[i]));

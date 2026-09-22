@@ -16,7 +16,7 @@ use guideme::policy::{Outcome, Thresholds, resolve};
 fn committed_spec_matches_render() -> Result<(), Box<dyn std::error::Error>> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spec");
     let rendered = guideme::spec::render()?;
-    assert_eq!(rendered.len(), 5);
+    assert_eq!(rendered.len(), 6);
     for (rel, contents) in rendered {
         let on_disk = std::fs::read_to_string(root.join(&rel))
             .unwrap_or_else(|e| panic!("{rel}: {e}; run `mise run spec`"));
@@ -42,6 +42,19 @@ fn committed_spec_matches_render() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     (Err(Error::Protocol { .. }), None) => assert_eq!(v["error"], "protocol"),
                     (r, o) => panic!("{rel}: {r:?} vs {o:?}"),
+                }
+            }
+        }
+        if rel.ends_with("rubric.json") {
+            let cases: Vec<serde_json::Value> = serde_json::from_str(&contents)?;
+            assert_eq!(cases.len(), 10, "{rel}: the rubric contract may not shrink");
+            for case in &cases {
+                // A case with no parts renders to its rubric itself: what keeps every
+                // rubric written before 0.1.1 on the wire unchanged.
+                if case["examples"] == serde_json::json!([])
+                    && case["counterexamples"] == serde_json::json!([])
+                {
+                    assert_eq!(case["rendered"], case["what"], "{rel}: passthrough broke");
                 }
             }
         }

@@ -204,3 +204,111 @@ async fn the_guide_surface_works_end_to_end_against_the_live_api()
     assert!(models.iter().any(|m| m.name == "jev-latest"));
     Ok(())
 }
+
+/// The confusable pair from the design note, without examples. On the ambiguous question
+/// below a plain rubric picks `return_policy`, which is the wrong answer.
+#[derive(guideme::Choice, Clone, Copy, PartialEq, Eq, Debug)]
+enum BareTopic {
+    /// Whether and how an item can be returned
+    ReturnPolicy,
+    /// Progress of a return already sent
+    ReturnStatus,
+}
+
+/// The same two rubrics, with the examples that tell them apart. Each option's example is the
+/// other's counterexample, which is the confusable-options pattern the feature exists for and
+/// the one overlap the derive keeps legal.
+#[derive(guideme::Choice, Clone, Copy, PartialEq, Eq, Debug)]
+enum GuidedTopic {
+    /// Whether and how an item can be returned
+    #[guide(
+        example = "Can I return shoes I've worn once?",
+        example = "How long do I have to return an order?"
+    )]
+    #[guide(counterexample = "Has my return arrived yet?")]
+    ReturnPolicy,
+    /// Progress of a return already sent
+    #[guide(
+        example = "Has my return arrived yet?",
+        example = "When will my refund be paid?"
+    )]
+    #[guide(counterexample = "Can I return shoes I've worn once?")]
+    ReturnStatus,
+}
+
+#[tokio::test]
+#[ignore = "hits the live TypeSafe API; needs TYPESAFE_API_KEY"]
+async fn examples_move_the_answer_towards_what_they_describe()
+-> Result<(), Box<dyn std::error::Error>> {
+    use guideme::{Guide, Rubric, Verdict, choose, noul};
+
+    if std::env::var("TYPESAFE_API_KEY").is_err() {
+        eprintln!("TYPESAFE_API_KEY not set; skipping");
+        return Ok(());
+    }
+    let guide = Guide::from_env()?;
+    let question = "Which returns topic is the customer asking about?";
+    let ambiguous = "About those shoes - what is the situation with the money side of things?";
+
+    let bare = guide
+        .ask(choose::<BareTopic>(question).detail(), ambiguous)
+        .await?;
+    let guided = guide
+        .ask(choose::<GuidedTopic>(question).detail(), ambiguous)
+        .await?;
+    eprintln!("bare   = {bare:?}");
+    eprintln!("guided = {guided:?}");
+
+    // The invariant the feature exists for, not a hardcoded score: a plain rubric reads this
+    // as a question about the returns policy, and naming the inputs that belong to each option
+    // moves the answer onto the return already in progress.
+    let bare_p = bare
+        .probabilities
+        .iter()
+        .find(|(topic, _)| *topic == BareTopic::ReturnStatus)
+        .map(|(_, p)| p.get())
+        .unwrap();
+    let guided_p = guided
+        .probabilities
+        .iter()
+        .find(|(topic, _)| *topic == GuidedTopic::ReturnStatus)
+        .map(|(_, p)| p.get())
+        .unwrap();
+    eprintln!("return_status: bare {bare_p} -> guided {guided_p}");
+    assert_eq!(guided.choice, GuidedTopic::ReturnStatus);
+    assert!(guided_p > bare_p);
+
+    // A noul's criteria are as confusable as a choice's options, and this is where examples
+    // swing hardest: the ticket describes a broken job that already has a manual workaround,
+    // which is one of the `false` examples, so naming it pulls the answer down.
+    let ticket = "Our nightly export job has been failing since Tuesday. We pull the numbers \
+                  by hand for now.";
+    let urgent = noul("Is this ticket urgent?");
+    let plain = guide
+        .ask(
+            urgent.clone().criteria("Urgent", "Not urgent").detail(),
+            ticket,
+        )
+        .await?;
+    let told = guide
+        .ask(
+            urgent
+                .criteria(
+                    Rubric::new("Urgent")
+                        .example("the checkout page is down for every customer")
+                        .example("money is moving to the wrong account"),
+                    Rubric::new("Not urgent")
+                        .example("a broken job with a manual workaround")
+                        .example("a cosmetic bug"),
+                )
+                .detail(),
+            ticket,
+        )
+        .await?;
+    let p = |verdict: &Verdict| match verdict {
+        Verdict::Yes(p) | Verdict::No(p) | Verdict::Unsure(p) => p.get(),
+    };
+    eprintln!("urgent: plain {} -> told {}", p(&plain), p(&told));
+    assert!(p(&told) < p(&plain));
+    Ok(())
+}

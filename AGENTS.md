@@ -27,10 +27,11 @@ The live TypeSafe docs are the source of truth for the wire contract, over two p
 | `guideme/src/api/client.rs` | HTTP, retries, status → `Error`, one HTTP client span per attempt and the `guideme.retry` event | the only file that may name `reqwest`; span fields follow the OpenTelemetry HTTP client conventions |
 | `guideme/src/policy.rs` | `resolve(&Answer, Thresholds) -> Outcome`, `Policy`, `Thresholds` | pure: no I/O, no generics, no Rust enums; its behaviour is the shared contract |
 | `guideme/src/question.rs` | question kinds, constructors, `Options`/`Levels` traits, the unsure ladder | every kind stays sealed |
+| `guideme/src/rubric.rs` | `Rubric`, the runtime half of the rubric renderer | renders identically to `guideme-derive`; a test pins the two |
 | `guideme/src/ask.rs` | the `Ask` shape trait (question, tuple, `Vec`, `BTreeMap`) | sealed; ids are `q0..qN` in encounter order |
 | `guideme/src/guide.rs` | `Guide::ask`, spans and events | one `guideme.ask` span per request, one `guideme.answer` event per question; span fields follow the OpenTelemetry GenAI conventions, anything else is namespaced `guideme.` |
 | `guideme/src/spec.rs`, `src/bin/spec.rs` | schemas and golden vectors under `spec/` | regenerate with `mise run spec`; the drift test fails otherwise |
-| `guideme-derive/src/lib.rs` | the two derives | every misuse is a compile error with a message naming the rule |
+| `guideme-derive/src/lib.rs` | the two derives and the rubric rendering | every misuse is a compile error with a message naming the rule; the rendered rubric is a cross-SDK contract item |
 
 `docs/design.md` records the decisions and the sharp edges. Update it when a decision changes.
 
@@ -79,7 +80,10 @@ Bump the version, regenerate the spec, and say so in `CHANGELOG.md`.
 
 ## Tests
 
-Few tests, high grade. The ceiling is 30 nextest entries. A new test must be one of:
+Few tests, high grade. The ceiling is 30 entries in the run the gate performs — what
+`cargo nextest run --workspace` reports, which is 29 today. The `#[ignore]`d live tests are
+not in it: they never execute in the gate, so they are not what the ceiling protects. A new
+test must be one of:
 
 - a property test (`proptest`) over a law of `policy::resolve` or the wire types;
 - a wire or contract check through `wiremock`, asserting on received requests and typed results;
@@ -148,6 +152,15 @@ Run everything from the repo root. Capture long output to a file; do not pipe a 
 4. `mise run spec`, commit the regenerated `spec/`.
 5. `mise run check`.
 6. Note it in `CHANGELOG.md` and open an issue in each other SDK repository citing the new spec commit.
+
+Changing how a rubric renders is a contract change too: the composition is shared with every
+other SDK, so it goes through `docs/contract.md`, `spec/vectors/rubric.json` and
+`CHANGELOG.md`. The clause labels and the declaration ordering are part of it. A rubric with no
+examples and no counterexamples must keep rendering to itself, byte for byte; that invariant is
+what makes every declaration written before the feature put the same bytes on the wire. The
+renderer lives twice, in `guideme-derive` and in `guideme/src/rubric.rs`, because
+`Options::RUBRIC` is a `const`; change both, and the pin in `guideme/tests/rubric.rs` is what
+catches you if you do not.
 
 Renaming, adding or removing a span or event field is also a contract change: it goes through
 `docs/observability.md`, `docs/contract.md` and `CHANGELOG.md`, and is announced the same way.

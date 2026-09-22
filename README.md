@@ -58,6 +58,65 @@ if guide.ask(score::<Frustration>("How frustrated is the customer?"), ticket).aw
 The doc comment on each variant is the rubric the model reads. The variant name in
 `snake_case` is the wire key. The compiler enforces that every option is handled.
 
+## Examples in a rubric
+
+A description alone leaves confusable options to a coin flip. Name the inputs that belong to
+an option, and the ones that do not:
+
+```rust
+#[derive(Choice, Clone, Copy, PartialEq, Eq, Debug)]
+enum Department {
+    /// Payments, invoicing, refunds
+    #[guide(example = "My card was charged twice", example = "Where is my refund?")]
+    #[guide(counterexample = "The dashboard is down")]
+    Billing,
+    /// Bugs, outages, integrations
+    #[guide(example = "502 on every request")]
+    Technical,
+    /// Pricing, upgrades, new accounts
+    #[guide(fallback, example = "Do you have a team plan?")]
+    Sales,
+}
+```
+
+`Billing` reaches the wire as one string:
+
+```text
+Payments, invoicing, refunds
+Examples: My card was charged twice; Where is my refund?
+Not this option: The dashboard is down
+```
+
+Both keys are repeatable and compose with `rubric`, `key` and `fallback`. A variant with
+neither renders to its rubric unchanged, byte for byte, so nothing you wrote before moves.
+
+`example` works on `#[derive(Levels)]` too, where an example *is* the statement that such an
+input scores at that level — its position on the scale carries the number, so nothing is added
+to the text. `counterexample` is a choice key only: a level is a position on a scale, not an
+option to rule out, and asking for one is a compile error. So are an empty or duplicated
+example, an example on a variant with no rubric to attach it to, and an example that claims an
+input belongs to two options at once. The same string as an example of one option and a
+counterexample of another is exactly the point, and stays legal.
+
+A noul has no enum to hang attributes off, so it takes `Rubric`, which composes the same way:
+
+```rust
+guide.ask(
+    noul("Is this ticket urgent?").criteria(
+        Rubric::new("Something is broken now and nobody can work around it")
+            .example("the checkout page is down")
+            .counterexample("a nightly job failed and we pull the numbers by hand for now"),
+        Rubric::new("It can wait for the next working day"),
+    ),
+    ticket,
+).await?
+```
+
+This is where examples earn the most: on that ticket, plain criteria answer 0.75 and these
+answer 0.25 — and 0.25 is right. `criteria` accepts a description or a `Rubric`, and a
+description is anything `String` converts from, so a plain pair of strings keeps working
+unchanged.
+
 ## Install
 
 ```sh
@@ -207,15 +266,16 @@ Retries on 429 and 529 use exponential backoff with jitter, capped at 30 s, and 
 - `guideme::api` is the exact wire mirror of `POST /v1/systemone` and `GET /v1/models`, plus
   `Client` for callers who want to build requests themselves.
 - `guideme::policy::resolve(&Answer, Thresholds) -> Outcome` is the pure decision function.
-  `spec/` holds its JSON Schemas and 42 golden vectors; `docs/contract.md` states what every
-  guideme SDK must satisfy. `docs/design.md` records the design and its sharp edges.
+  `spec/` holds its JSON Schemas, 42 golden policy vectors and the rubric rendering cases;
+  `docs/contract.md` states what every guideme SDK must satisfy. `docs/design.md` records the
+  design and its sharp edges.
 
 ## Other SDKs
 
 Every guideme SDK is written from scratch in its own language and answers the same way,
 because they all satisfy the contract this repository publishes under `spec/` and states in
-[`docs/contract.md`](docs/contract.md): the wire schemas, the 42 golden policy vectors, and
-the interface shape.
+[`docs/contract.md`](docs/contract.md): the wire schemas, the 42 golden policy vectors, the
+rubric rendering, and the interface shape.
 
 | Language | Package | Repository |
 |---|---|---|

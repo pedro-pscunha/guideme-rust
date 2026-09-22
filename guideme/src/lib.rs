@@ -58,12 +58,16 @@
 //! # Ok(()) }
 //! ```
 
+// `spec` declares enums through this crate's own derives, which expand to `::guideme` paths.
+extern crate self as guideme;
+
 pub mod api;
 mod ask;
 mod error;
 mod guide;
 pub mod policy;
 mod question;
+mod rubric;
 mod scalars;
 #[doc(hidden)]
 pub mod spec;
@@ -77,4 +81,5 @@ pub use question::{
     Binary, Choose, Confident, Detailed, Fallible, Key, Kind, Levels, Noul, Options, Question,
     Rank, Ranked, Score, Scored, choose, choose_among, noul, score, score_levels,
 };
+pub use rubric::{IntoRubric, Rubric};
 pub use scalars::{ApiKey, Confidence, Instructions, Model, Probability, State};

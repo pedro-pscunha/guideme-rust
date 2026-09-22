@@ -1,5 +1,6 @@
-//! The shared contract: JSON Schemas for the wire and policy types, and golden vectors
-//! for [`crate::policy::resolve`]. `mise run spec` writes them to `spec/`.
+//! The shared contract: JSON Schemas for the wire and policy types, golden vectors for
+//! [`crate::policy::resolve`], and the rubric rendering cases. `mise run spec` writes them
+//! to `spec/`.
 
 use std::collections::BTreeMap;
 
@@ -7,7 +8,7 @@ use serde::Serialize;
 
 use crate::api::{Answer, Request, Response};
 use crate::policy::{Outcome, Thresholds, resolve};
-use crate::{Confidence, Error, Probability};
+use crate::{Confidence, Error, Levels, Options, Probability, Rubric};
 
 /// How many vectors [`render`] produces. Guarded so the contract cannot silently shrink.
 pub const EXPECTED_VECTORS: usize = 42;
@@ -70,6 +71,7 @@ pub fn render() -> Result<Vec<(String, String)>, Error> {
         });
     }
     out.push(("vectors/policy.json".to_owned(), pretty(&vectors)?));
+    out.push(("vectors/rubric.json".to_owned(), pretty(&rubric_cases()?)?));
     Ok(out)
 }
 
@@ -180,4 +182,215 @@ fn vectors() -> Result<Vec<Vector>, Error> {
         });
     }
     Ok(out)
+}
+
+/// The choice half of the rubric vector: one variant per case, in the order of the golden
+/// table in `docs/contract.md`. Split across two enums because the golden rows deliberately
+/// reuse a string that no single declaration may use twice.
+#[derive(Clone, PartialEq, Eq, crate::Choice)]
+enum SpecChoice {
+    /// Payments, invoicing, refunds
+    Bare,
+    /// Bugs, outages, integrations
+    #[guide(example = "502 on every request")]
+    OneExample,
+    /// Payments, invoicing, refunds
+    #[guide(example = "My card was charged twice", example = "Where is my refund?")]
+    TwoExamples,
+}
+
+/// The rows that carry a counterexample, plus the case that pins declaration order: neither
+/// clause is in sorted order, so a renderer that sorted would not reproduce it.
+#[derive(Clone, PartialEq, Eq, crate::Choice)]
+enum SpecChoiceCounter {
+    /// Payments, invoicing, refunds
+    #[guide(example = "My card was charged twice")]
+    #[guide(counterexample = "The dashboard is down")]
+    Both,
+    /// Payments, invoicing, refunds
+    #[guide(counterexample = "The dashboard is down")]
+    OnlyCounterexample,
+    /// Payments, invoicing, refunds
+    #[guide(example = "Why was I billed twice?", example = "Cancel and refund me")]
+    #[guide(
+        counterexample = "The status page is red",
+        counterexample = "Are you hiring?"
+    )]
+    DeclarationOrder,
+}
+
+/// The score half. A level never carries a counterexample.
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, crate::Levels)]
+enum SpecLevel {
+    /// No impact to functionality
+    #[guide(example = "typo in a label", example = "misaligned icon")]
+    Cosmetic,
+    /// No workaround exists
+    Blocking,
+}
+
+/// `(what, examples, counterexamples)` per [`SpecChoice`] variant, in declaration order.
+const CHOICE_PARTS: [(&str, &[&str], &[&str]); 3] = [
+    ("Payments, invoicing, refunds", &[], &[]),
+    (
+        "Bugs, outages, integrations",
+        &["502 on every request"],
+        &[],
+    ),
+    (
+        "Payments, invoicing, refunds",
+        &["My card was charged twice", "Where is my refund?"],
+        &[],
+    ),
+];
+
+/// The same, per [`SpecChoiceCounter`] variant.
+const COUNTER_PARTS: [(&str, &[&str], &[&str]); 3] = [
+    (
+        "Payments, invoicing, refunds",
+        &["My card was charged twice"],
+        &["The dashboard is down"],
+    ),
+    (
+        "Payments, invoicing, refunds",
+        &[],
+        &["The dashboard is down"],
+    ),
+    (
+        "Payments, invoicing, refunds",
+        &["Why was I billed twice?", "Cancel and refund me"],
+        &["The status page is red", "Are you hiring?"],
+    ),
+];
+
+/// The noul half. A noul has no enum to derive from, so these come straight from a
+/// [`Rubric`], which makes them the vector's only coverage of the runtime renderer.
+const NOUL_PARTS: [(&str, &[&str], &[&str]); 2] = [
+    (
+        "Something is broken now and nobody can work around it",
+        &["the checkout page is down"],
+        &["a nightly job failed and the numbers are pulled by hand for now"],
+    ),
+    ("It can wait for the next working day", &[], &[]),
+];
+
+/// `(what, examples)` per [`SpecLevel`] variant, low to high.
+const LEVEL_PARTS: [(&str, &[&str]); 2] = [
+    (
+        "No impact to functionality",
+        &["typo in a label", "misaligned icon"],
+    ),
+    ("No workaround exists", &[]),
+];
+
+/// One rubric case: what the caller wrote, and what was rendered from it. `kind` is
+/// `"choice"`, `"levels"` or `"noul"` — which question kind the rubric sits in.
+#[derive(Serialize)]
+struct RubricCase {
+    kind: &'static str,
+    what: &'static str,
+    examples: &'static [&'static str],
+    counterexamples: &'static [&'static str],
+    rendered: String,
+}
+
+/// Build the rubric vector by reading `RUBRIC` and `LEVELS` off real derived enums, so the
+/// published cases are what the macro emits rather than a second copy of the algorithm.
+fn rubric_cases() -> Result<Vec<RubricCase>, Error> {
+    let mut out = Vec::with_capacity(
+        CHOICE_PARTS.len() + COUNTER_PARTS.len() + LEVEL_PARTS.len() + NOUL_PARTS.len(),
+    );
+    push_choice(&mut out, SpecChoice::RUBRIC, &CHOICE_PARTS)?;
+    push_choice(&mut out, SpecChoiceCounter::RUBRIC, &COUNTER_PARTS)?;
+    if SpecLevel::LEVELS.len() != LEVEL_PARTS.len() {
+        return Err(Error::Config {
+            detail: "the level grid and its enum disagree on length".into(),
+        });
+    }
+    for (rendered, (what, examples)) in SpecLevel::LEVELS.iter().zip(LEVEL_PARTS) {
+        out.push(rubric_case("levels", what, examples, &[], rendered)?);
+    }
+    for (what, examples, counterexamples) in NOUL_PARTS {
+        let rendered = rubric(what, examples, counterexamples).render()?;
+        out.push(RubricCase {
+            kind: "noul",
+            what,
+            examples,
+            counterexamples,
+            rendered,
+        });
+    }
+    Ok(out)
+}
+
+/// Build the runtime rubric a case describes.
+fn rubric(what: &str, examples: &[&str], counterexamples: &[&str]) -> Rubric {
+    let mut rubric = Rubric::new(what);
+    for example in examples {
+        rubric = rubric.example(*example);
+    }
+    for counterexample in counterexamples {
+        rubric = rubric.counterexample(*counterexample);
+    }
+    rubric
+}
+
+/// Append one derived choice enum's cases, pairing each variant with the parts it was written
+/// from.
+fn push_choice(
+    out: &mut Vec<RubricCase>,
+    rubric: &'static [(&'static str, Option<&'static str>)],
+    parts: &'static [(
+        &'static str,
+        &'static [&'static str],
+        &'static [&'static str],
+    )],
+) -> Result<(), Error> {
+    if rubric.len() != parts.len() {
+        return Err(Error::Config {
+            detail: "the rubric grid and its enum disagree on length".into(),
+        });
+    }
+    for ((_, rendered), (what, examples, counterexamples)) in
+        rubric.iter().zip(parts.iter().copied())
+    {
+        let rendered = rendered.ok_or_else(|| Error::Config {
+            detail: format!("rubric case {what:?} lost its rubric"),
+        })?;
+        out.push(rubric_case(
+            "choice",
+            what,
+            examples,
+            counterexamples,
+            rendered,
+        )?);
+    }
+    Ok(())
+}
+
+/// Pair one case with what the derive rendered, rejecting a grid that has drifted from its
+/// enum — and, because the runtime renderer is a second copy of the algorithm, refusing to
+/// publish a vector the two do not agree on.
+fn rubric_case(
+    kind: &'static str,
+    what: &'static str,
+    examples: &'static [&'static str],
+    counterexamples: &'static [&'static str],
+    rendered: &'static str,
+) -> Result<RubricCase, Error> {
+    let from_rubric = rubric(what, examples, counterexamples).render()?;
+    if from_rubric != rendered {
+        return Err(Error::Config {
+            detail: format!(
+                "rubric case {what:?}: the derive rendered {rendered:?}, Rubric rendered {from_rubric:?}"
+            ),
+        });
+    }
+    Ok(RubricCase {
+        kind,
+        what,
+        examples,
+        counterexamples,
+        rendered: from_rubric,
+    })
 }

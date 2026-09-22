@@ -1,5 +1,48 @@
 # Changelog
 
+## Unreleased
+
+- `#[guide(example = "…")]` and `#[guide(counterexample = "…")]`, both repeatable, compose a
+  variant's rubric into the text the model reads: an `Examples:` line and a `Not this option:`
+  line, items joined with `; `. `counterexample` is a `Choice` key only. The derive renders the
+  string at expansion time, so `Options::RUBRIC`, `Levels::LEVELS`, the wire and the schemas are
+  unchanged. A rubric with no examples and no counterexamples renders to itself, byte for byte,
+  so every 0.1.0 declaration puts the same bytes on the wire.
+- `Rubric`, a small builder for the rubric positions that are not an enum:
+  `Rubric::new(what).example(..).counterexample(..)` composes the same way. All three question
+  kinds now take examples; a noul's `true`/`false` criteria measured the largest swing of the
+  three. `noul(..).criteria(yes, no)` now takes `impl IntoRubric` rather than
+  `impl Into<String>`. `IntoRubric` is sealed and covers everything `Into<String>` covers, plus
+  `Rubric`, so this is a widening: every 0.1.0 call still compiles, including one made from a
+  caller's own helper generic over `Into<String>`. It buys an error channel — an empty example
+  or counterexample, a duplicate within a clause, a string that is both an example and a
+  counterexample, and examples attached to a blank description are each rejected with
+  `Error::Config` when the question is asked, in the derives' wording, as is an example shared
+  by a noul's `true` and `false` rubrics. `Rubric::render` is fallible and is the only way to
+  turn one into a string, so there is no unchecked path to the wire; `Rubric` is deliberately
+  not `Into<String>`, which is what lets `IntoRubric` accept both it and a plain description.
+- Declaration-time checks, each a compile error naming the rule: an empty or whitespace-only
+  example or counterexample; a duplicate within one variant's examples; `counterexample` on a
+  `Levels` derive; the same string as an example of two different variants; and the same string
+  as both an example and a counterexample of one variant. The same string as an example of one
+  option and a counterexample of another stays legal — that is the confusable-options pattern
+  the feature exists for.
+- **This release breaks no existing build.** Every new compile error needs a `#[guide(example)]`
+  or `#[guide(counterexample)]` to fire, and nothing in 0.1.0 could have written one. In
+  particular a variant whose rubric is empty or whitespace — `#[guide(rubric = "")]`, or a bare
+  `///` — still compiles exactly as it did: it is rejected only when examples were attached to
+  it, which is the "you described nothing" case. The Python SDK draws the line in the same
+  place, so the same declaration is legal or illegal in both.
+- Examples and counterexamples render in declaration order, and the `Not this option` label is
+  fixed. Both are contract, and `spec/vectors/rubric.json` covers them.
+- An example or counterexample may not contain `U+000A` or `U+000D`: items are joined onto one
+  line, so a line break in one would render as a clause the declaration never wrote. A rubric's
+  description may still contain anything. Items are new in this release, so nothing can already
+  depend on it — which is why the rule ships with the feature rather than after it.
+- `spec/vectors/rubric.json`: the rendering is a cross-SDK contract item, published as golden
+  cases generated from real derived enums. `spec/schema/` and `spec/vectors/policy.json` are
+  byte-identical to 0.1.0.
+
 ## 0.1.0 (2026-09-21)
 
 First release.

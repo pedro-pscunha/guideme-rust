@@ -1,0 +1,5 @@
+error: guideme: #[guide(counterexample)] must not be empty
+ --> tests/ui/empty_counterexample.rs:4:30
+  |
+4 |     #[guide(counterexample = "  ")]
+  |                              ^^^^
