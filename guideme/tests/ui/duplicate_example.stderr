@@ -1,0 +1,5 @@
+error: guideme: duplicate #[guide(example = "Where is my refund?")] on this variant
+ --> tests/ui/duplicate_example.rs:4:56
+  |
+4 |     #[guide(example = "Where is my refund?", example = "Where is my refund?")]
+  |                                                        ^^^^^^^^^^^^^^^^^^^^^

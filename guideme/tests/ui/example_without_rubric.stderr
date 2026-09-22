@@ -1,0 +1,6 @@
+error: guideme: #[guide(example)] on `Technical` needs a rubric to attach to (a /// doc comment or #[guide(rubric = "…")])
+ --> tests/ui/example_without_rubric.rs:5:5
+  |
+5 | /     #[guide(example = "502 on every request")]
+6 | |     Technical,
+  | |_____________^

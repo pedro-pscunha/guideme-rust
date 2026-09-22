@@ -3,6 +3,12 @@
 //! Both work on enums whose variants are all unit variants. A variant's `///` doc comment is
 //! its rubric; `#[guide(rubric = "…")]` overrides it. `Choice` keys default to the variant
 //! name in `snake_case`; `#[guide(key = "…")]` overrides. At most one `#[guide(fallback)]`.
+//!
+//! `#[guide(example = "…")]` and `#[guide(counterexample = "…")]` are repeatable and compose
+//! into the rubric the model reads: an `Examples:` line and a `Not this option:` line, items
+//! joined with `; `. A variant with neither renders to its rubric unchanged, byte for byte.
+//! `counterexample` is a `Choice` key only: a level is a position on a scale, not an option to
+//! rule out.
 
 use heck::ToSnakeCase;
 use proc_macro::TokenStream;
@@ -10,12 +16,69 @@ use proc_macro2::Span;
 use quote::quote;
 use syn::{Data, DeriveInput, Error, Fields, Ident, LitStr, Meta, Result, parse_macro_input};
 
-/// One enum variant with its wire key, rubric and fallback flag resolved.
+/// One enum variant with its wire key, rubric, examples and fallback flag resolved.
 struct Variant {
     ident: Ident,
     key: String,
     rubric: Option<String>,
+    examples: Vec<String>,
+    counterexamples: Vec<String>,
     fallback: bool,
+}
+
+impl Variant {
+    /// The rubric as the model reads it, or `None` when the variant has none.
+    fn rendered(&self) -> Option<String> {
+        self.rubric
+            .as_ref()
+            .map(|what| render(what, &self.examples, &self.counterexamples))
+    }
+}
+
+/// Compose a rubric: the description, then the example clauses, one per line.
+///
+/// With no examples and no counterexamples the output is `what` itself, byte for byte — a
+/// rubric written before this existed puts the same bytes on the wire. `what` is used verbatim:
+/// never trimmed, never re-punctuated. This algorithm is a cross-SDK contract item; see
+/// `docs/contract.md`.
+fn render(what: &str, examples: &[String], counterexamples: &[String]) -> String {
+    if examples.is_empty() && counterexamples.is_empty() {
+        return what.to_owned();
+    }
+    let mut out = what.to_owned();
+    if !examples.is_empty() {
+        out.push_str("\nExamples: ");
+        out.push_str(&examples.join("; "));
+    }
+    if !counterexamples.is_empty() {
+        out.push_str("\nNot this option: ");
+        out.push_str(&counterexamples.join("; "));
+    }
+    out
+}
+
+/// Parse one repeatable `#[guide(example = "…")]` / `#[guide(counterexample = "…")]` value.
+fn push_item(
+    meta: &syn::meta::ParseNestedMeta<'_>,
+    key: &str,
+    into: &mut Vec<String>,
+) -> Result<()> {
+    let lit = meta.value()?.parse::<LitStr>()?;
+    let value = lit.value();
+    if value.trim().is_empty() {
+        return Err(Error::new_spanned(
+            &lit,
+            format!("guideme: #[guide({key})] must not be empty"),
+        ));
+    }
+    if into.contains(&value) {
+        return Err(Error::new_spanned(
+            &lit,
+            format!("guideme: duplicate #[guide({key} = {value:?})] on this variant"),
+        ));
+    }
+    into.push(value);
+    Ok(())
 }
 
 /// Derive `guideme::Options` for a unit-variant enum.
@@ -57,6 +120,8 @@ fn variants(input: &DeriveInput, derive: &str) -> Result<Vec<Variant>> {
         }
         let mut key = v.ident.to_string().to_snake_case();
         let mut rubric = doc_comment(&v.attrs);
+        let mut examples = Vec::new();
+        let mut counterexamples = Vec::new();
         let mut fallback = false;
         for attr in v.attrs.iter().filter(|a| a.path().is_ident("guide")) {
             attr.parse_nested_meta(|meta| {
@@ -71,18 +136,54 @@ fn variants(input: &DeriveInput, derive: &str) -> Result<Vec<Variant>> {
                     rubric = Some(meta.value()?.parse::<LitStr>()?.value());
                 } else if meta.path.is_ident("fallback") {
                     fallback = true;
+                } else if meta.path.is_ident("example") {
+                    push_item(&meta, "example", &mut examples)?;
+                } else if meta.path.is_ident("counterexample") {
+                    if derive == "Levels" {
+                        return Err(meta.error(
+                            "guideme: #[guide(counterexample)] is not allowed on Levels; a level is a position on a scale, not an option to rule out",
+                        ));
+                    }
+                    push_item(&meta, "counterexample", &mut counterexamples)?;
                 } else {
                     return Err(meta.error(
-                        "guideme: unknown #[guide(..)] option; expected key, rubric, or fallback",
+                        "guideme: unknown #[guide(..)] option; expected key, rubric, fallback, example, or counterexample",
                     ));
                 }
                 Ok(())
             })?;
         }
+        if let Some(what) = &rubric
+            && what.trim().is_empty()
+        {
+            return Err(Error::new_spanned(
+                v,
+                format!(
+                    "guideme: the rubric on `{}` is empty; a rubric is the text the model reads",
+                    v.ident
+                ),
+            ));
+        }
+        if rubric.is_none() && !(examples.is_empty() && counterexamples.is_empty()) {
+            let option = if examples.is_empty() {
+                "counterexample"
+            } else {
+                "example"
+            };
+            return Err(Error::new_spanned(
+                v,
+                format!(
+                    "guideme: #[guide({option})] on `{}` needs a rubric to attach to (a /// doc comment or #[guide(rubric = \"…\")])",
+                    v.ident
+                ),
+            ));
+        }
         out.push(Variant {
             ident: v.ident.clone(),
             key,
             rubric,
+            examples,
+            counterexamples,
             fallback,
         });
     }
@@ -149,7 +250,7 @@ fn expand_choice(input: &DeriveInput) -> Result<proc_macro2::TokenStream> {
     let idents = vs.iter().map(|v| &v.ident);
     let keys = vs.iter().map(|v| &v.key);
     let rubrics = vs.iter().map(|v| {
-        if let Some(r) = &v.rubric {
+        if let Some(r) = v.rendered() {
             quote!(Some(#r))
         } else {
             quote!(None)
@@ -195,7 +296,7 @@ fn expand_levels(input: &DeriveInput) -> Result<proc_macro2::TokenStream> {
     }
     let mut levels = Vec::with_capacity(vs.len());
     for v in &vs {
-        let Some(rubric) = &v.rubric else {
+        let Some(rubric) = v.rendered() else {
             return Err(Error::new_spanned(
                 &v.ident,
                 format!(
@@ -204,7 +305,7 @@ fn expand_levels(input: &DeriveInput) -> Result<proc_macro2::TokenStream> {
                 ),
             ));
         };
-        levels.push(rubric.clone());
+        levels.push(rubric);
     }
     let name = &input.ident;
     let idents: Vec<&Ident> = vs.iter().map(|v| &v.ident).collect();
@@ -223,4 +324,28 @@ fn expand_levels(input: &DeriveInput) -> Result<proc_macro2::TokenStream> {
             }
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::pedantic,
+        missing_docs
+    )]
+
+    use proptest::prelude::*;
+
+    use super::render;
+
+    proptest! {
+        /// The load-bearing invariant: a rubric with no parts is its own rendering, so a
+        /// declaration written before examples existed puts the same bytes on the wire.
+        #[test]
+        fn a_rubric_with_no_parts_renders_to_itself(what in "\\PC{0,64}") {
+            prop_assert_eq!(render(&what, &[], &[]), what);
+        }
+    }
 }

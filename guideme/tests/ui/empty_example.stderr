@@ -1,0 +1,5 @@
+error: guideme: #[guide(example)] must not be empty
+ --> tests/ui/empty_example.rs:4:23
+  |
+4 |     #[guide(example = "")]
+  |                       ^^
