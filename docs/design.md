@@ -60,8 +60,9 @@ Each module survives the test.
   every call that compiled against `impl Into<String>` still compiles, including a caller's own
   helper generic over `Into<String>`, which no set of `From<T> for Rubric` conversions can
   reach. The price is that `Rubric` must not be `Into<String>`, or the two cases overlap, so it
-  renders through `Display` instead. Widening rather than overloading is what gives the runtime
-  path an error channel.
+  renders through `Rubric::render` instead — and permanently, since adding the conversion later
+  would make the two `IntoRubric` impls overlap. Widening rather than overloading is what gives
+  the runtime path an error channel.
 - **Compatibility claims get compiled, not reasoned about.** The first attempt widened to
   `impl Into<Rubric>` with `From<&str>` and `From<String>`, and argued from those that nothing
   broke. Compiling one call of every shape `String` converts from found four that did —
@@ -101,12 +102,14 @@ Each module survives the test.
   counterexample of another stays legal: that is the confusable-options pattern the feature
   exists for, and `guideme/tests/live.rs` uses it.
 - **`Rubric` is checked when the question is asked, not when it is built.** A builder has no
-  `Result` to return, so the checks live in `Rubric::into_wire`, called from `Noul::wire`, which
-  already returns `Error::Config` for the other malformed-question cases. Everything one rubric
-  can see is checked there — an empty entry, a duplicate within a clause, a string that is both
-  an example and a counterexample, examples attached to a blank description — in the derive's
-  wording, so the two read as one rule. Only the checks that compare two options need a whole
-  declaration, and those stay in the derive.
+  `Result` to return, so the checks live in `Rubric::render`, which is fallible and is the only
+  way to turn a rubric into a string. There is no `Display`: an infallible renderer would be the
+  path every caller reaches for and every check would be optional. Everything one rubric can see
+  is checked there — an empty entry, a duplicate within a clause, a string that is both an
+  example and a counterexample, examples attached to a blank rubric — in the derive's wording,
+  so the two read as one rule. A noul's pair is checked together for a shared example, because
+  it is the one runtime path holding two rubrics at once; `choose_among` has no such moment, so
+  there the cross-option rules stay compile-time only.
 - **A rubric with no examples renders to itself.** This is what keeps 0.1.1 non-breaking, and
   it is why `what` is never trimmed or re-punctuated. `spec/vectors/rubric.json` pins it, and
   `guideme-derive` property-tests it.

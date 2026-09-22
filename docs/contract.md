@@ -68,14 +68,18 @@ itself. A rubric written as a bare string puts the same bytes on the wire as it 
 
 `spec/vectors/rubric.json` is the golden set; every case carries `what`, `examples`,
 `counterexamples` and the `rendered` result, and every SDK must reproduce each `rendered`
-exactly. A level never renders a counterexample clause: a level is a position on a scale, not
+exactly. Every case also carries `kind` — `"choice"`, `"levels"` or `"noul"` — naming the
+question kind the rubric sits in. A level never renders a counterexample clause: a level is a position on a scale, not
 an option to rule out, and an example under a level *is* the statement that such an input
 scores there — no numeric annotation is added to the text.
 
 Where the rendering happens is each language's business, and the SDKs differ on purpose. Rust
 renders inside `#[derive(Choice)]` / `#[derive(Levels)]` at expansion time, because
 `Options::RUBRIC` is a `const` and cannot call a function, and offers `Rubric` for the rubric
-positions that are not an enum, rendered by `Display` where a caller wants the string itself. Python renders where a rubric becomes wire text, so
+positions that are not an enum. Rust has no unchecked way to render one: `Rubric::render`
+returns `Result`, and there is deliberately no `Display`, so a caller feeding a rubric into the
+`&str` constructors gets the checks rather than bypassing them. Python renders where a rubric
+becomes wire text, so
 `choose_among()` and `score_levels()` accept an `option()` / `level()` value directly, while
 Rust's equivalents keep taking `&str` and a caller passes a pre-rendered string; widening them
 risks inference breakage for existing callers and is deferred to 0.2.0. Equivalent inputs
@@ -100,6 +104,9 @@ Two definitions, because they are the kind of thing two SDKs drift on silently:
 - **Duplicate detection is exact string equality**, with no trimming, case folding or Unicode
   normalisation. `"a"` and `" a"` are two different examples and both are legal. Only the
   emptiness check trims, so the two rules deliberately disagree about what `" a"` is.
+- **Items are inserted verbatim.** No escaping is performed on an item containing `"; "` or a
+  newline, and the rendering is not required to be reversible: a reader cannot in general
+  recover the item list from the rendered string, and no SDK should try.
 
 An empty or whitespace-only rubric is rejected **only where examples were attached to it** —
 you described nothing. A rubric that carries neither keeps whatever an SDK did before this
@@ -107,8 +114,10 @@ feature existed, because rejecting it would be a new error for a declaration tha
 to do with examples. Every rule above that a single rubric can see holds on the runtime paths
 too, wherever the language cannot reach a declaration: Python refuses them when the rubric is
 constructed, Rust returns `Error::Config` when the question carrying it is asked. The rules
-that compare two options — an example shared by both, and the must-allow overlap — need a
-whole declaration in view, and in Rust are compile-time only.
+that compare two options need more than one rubric in view, so where they can be applied
+differs: a noul holds its `true` and `false` rubrics together and both SDKs reject an example
+shared by the two, while a choice built from runtime options has no such moment in Rust and the
+rule is compile-time only there. The must-allow overlap is never rejected anywhere.
 
 ## 4. Interface shape
 

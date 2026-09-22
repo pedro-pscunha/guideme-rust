@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.1 (2026-09-21)
+## Unreleased
 
 - `#[guide(example = "…")]` and `#[guide(counterexample = "…")]`, both repeatable, compose a
   variant's rubric into the text the model reads: an `Examples:` line and a `Not this option:`
@@ -17,8 +17,10 @@
   caller's own helper generic over `Into<String>`. It buys an error channel — an empty example
   or counterexample, a duplicate within a clause, a string that is both an example and a
   counterexample, and examples attached to a blank description are each rejected with
-  `Error::Config` when the question is asked, in the derives' wording. `Rubric` renders through
-  `Display`; it is deliberately not `Into<String>`, which is what lets `IntoRubric` accept both.
+  `Error::Config` when the question is asked, in the derives' wording, as is an example shared
+  by a noul's `true` and `false` rubrics. `Rubric::render` is fallible and is the only way to
+  turn one into a string, so there is no unchecked path to the wire; `Rubric` is deliberately
+  not `Into<String>`, which is what lets `IntoRubric` accept both it and a plain description.
 - Declaration-time checks, each a compile error naming the rule: an empty or whitespace-only
   example or counterexample; a duplicate within one variant's examples; `counterexample` on a
   `Levels` derive; the same string as an example of two different variants; and the same string
