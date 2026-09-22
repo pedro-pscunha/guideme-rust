@@ -14,11 +14,17 @@
   pair of strings keeps working. All three question kinds now take examples; a noul's
   `true`/`false` criteria measured the largest swing of the three.
 - Declaration-time checks, each a compile error naming the rule: an empty or whitespace-only
-  rubric, example or counterexample; a duplicate within one variant's examples; an example on a
-  variant with no rubric; `counterexample` on a `Levels` derive; the same string as an example
-  of two different variants; and the same string as both an example and a counterexample of one
-  variant. The same string as an example of one option and a counterexample of another stays
-  legal — that is the confusable-options pattern the feature exists for.
+  example or counterexample; a duplicate within one variant's examples; `counterexample` on a
+  `Levels` derive; the same string as an example of two different variants; and the same string
+  as both an example and a counterexample of one variant. The same string as an example of one
+  option and a counterexample of another stays legal — that is the confusable-options pattern
+  the feature exists for.
+- **This release breaks no existing build.** Every new compile error needs a `#[guide(example)]`
+  or `#[guide(counterexample)]` to fire, and nothing in 0.1.0 could have written one. In
+  particular a variant whose rubric is empty or whitespace — `#[guide(rubric = "")]`, or a bare
+  `///` — still compiles exactly as it did: it is rejected only when examples were attached to
+  it, which is the "you described nothing" case. The Python SDK draws the line in the same
+  place, so the same declaration is legal or illegal in both.
 - Examples and counterexamples render in declaration order, and the `Not this option` label is
   fixed. Both are contract, and `spec/vectors/rubric.json` covers them.
 - `spec/vectors/rubric.json`: the rendering is a cross-SDK contract item, published as golden

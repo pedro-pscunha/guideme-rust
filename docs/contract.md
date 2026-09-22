@@ -81,13 +81,18 @@ Rust's equivalents keep taking `&str` and a caller passes a pre-rendered string;
 risks inference breakage for existing callers and is deferred to 0.2.0. Equivalent inputs
 produce identical wire bytes either way; only the convenience differs.
 
-Declaration-time validation is shared. Rejected loudly: an empty or whitespace-only rubric,
-example or counterexample; a duplicate string within one option's examples or within its
-counterexamples; the same string as an example of two different options, or of two different
-levels, since it cannot belong to both; and the same string as both an example and a
-counterexample of the same option. The same string as an example of one option and a
-counterexample of **another** is legitimate and must stay legal — it is exactly the
-confusable-options pattern this feature exists for.
+Declaration-time validation is shared. Rejected loudly: an empty or whitespace-only example or
+counterexample; a duplicate string within one option's examples or within its counterexamples;
+the same string as an example of two different options, or of two different levels, since it
+cannot belong to both; and the same string as both an example and a counterexample of the same
+option. The same string as an example of one option and a counterexample of **another** is
+legitimate and must stay legal — it is exactly the confusable-options pattern this feature
+exists for.
+
+An empty or whitespace-only rubric is rejected **only where examples were attached to it** —
+you described nothing. A rubric that carries neither keeps whatever an SDK did before this
+feature existed, because rejecting it would be a new error for a declaration that has nothing
+to do with examples.
 
 ## 4. Interface shape
 

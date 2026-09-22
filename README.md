@@ -93,10 +93,10 @@ neither renders to its rubric unchanged, byte for byte, so nothing you wrote bef
 `example` works on `#[derive(Levels)]` too, where an example *is* the statement that such an
 input scores at that level — its position on the scale carries the number, so nothing is added
 to the text. `counterexample` is a choice key only: a level is a position on a scale, not an
-option to rule out, and asking for one is a compile error. So are an empty rubric, an empty or
-duplicated example, an example on a variant with no rubric, and an example that claims an input
-belongs to two options at once. The same string as an example of one option and a counterexample
-of another is exactly the point, and stays legal.
+option to rule out, and asking for one is a compile error. So are an empty or duplicated
+example, an example on a variant with no rubric to attach it to, and an example that claims an
+input belongs to two options at once. The same string as an example of one option and a
+counterexample of another is exactly the point, and stays legal.
 
 A noul has no enum to hang attributes off, so it takes `Rubric`, which composes the same way:
 
