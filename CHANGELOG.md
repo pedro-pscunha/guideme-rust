@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.1 (2026-09-22)
 
 - `#[guide(example = "…")]` and `#[guide(counterexample = "…")]`, both repeatable, compose a
   variant's rubric into the text the model reads: an `Examples:` line and a `Not this option:`
