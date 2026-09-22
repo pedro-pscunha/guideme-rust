@@ -376,7 +376,7 @@ mod tests {
         /// tests the same law over `Rubric`: two copies of ~10 lines, so the property is worth
         /// asserting on each rather than pinning one against the other on fixed rows.
         #[test]
-        fn a_rubric_with_no_parts_renders_to_itself(what in "\\PC{0,64}") {
+        fn a_rubric_with_no_parts_renders_to_itself(what in "(?s).{0,64}") {
             prop_assert_eq!(render(&what, &[], &[]), what);
         }
     }
