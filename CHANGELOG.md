@@ -35,7 +35,14 @@
   the whole client. Every setting an injected client already carries (`api_key`, `base_url`,
   `max_retries`, `backoff`, `timeout`) is refused **by name** when it is also set on the guide
   builder, and a `timeout` beside `http(..)` likewise: a setting that silently does nothing is
-  what this guards against.
+  what this guards against. `from_env()` sets two of them, which the refusal says out loud.
+- `api::reqwest` re-exports the `reqwest` guideme links, so the client `http(..)` takes is
+  `guideme::api::reqwest::Client` and a caller adds no dependency and tracks no version. Two
+  `reqwest` majors in one tree are two unrelated `Client` types, and the error when they
+  disagree names neither the cause nor the fix. **The consequence is that a `reqwest` major
+  bump is now a breaking change for guideme**; it is recorded under Releasing in `AGENTS.md`.
+- `Receipt` is `#[non_exhaustive]`. The response is the API's to grow and what it grows
+  belongs here, so adding a field later stays non-breaking for anyone reading the fields.
 - `GuideBuilder::from_env()` reads `TYPESAFE_API_KEY` (required), `TYPESAFE_BASE_URL` and
   `GUIDEME_MODEL` (optional) onto a builder you are still configuring, so
   `Guide::builder().from_env()?.policy(HOUSE).build()?` works. `Guide::from_env()` stays as the
