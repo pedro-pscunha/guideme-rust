@@ -209,5 +209,31 @@ async fn the_rendered_rubric_is_what_reaches_the_wire() -> Result<(), Box<dyn st
         body["questions"]["q3"]["criteria"],
         serde_json::json!([ROWS[6].3, ROWS[7].3])
     );
+
+    // `criteria` took `impl Into<String>` in 0.1.0 and takes `impl Into<Rubric>` now. These
+    // compiling is the whole claim that the change breaks no caller: one of every shape
+    // `String` converts from.
+    let owned = String::from("x");
+    let _ = noul("q").criteria("literal", String::from("owned"));
+    let _ = noul("q").criteria(&owned, std::borrow::Cow::Borrowed("cow"));
+    let _ = noul("q").criteria(Box::<str>::from("boxed"), 'c');
+
+    // Examples attached to nothing never reach the wire: the same rule the derives enforce at
+    // compile time, on the path where there is no declaration to reject. A blank description
+    // carrying no parts is left alone, because that is what 0.1.0 accepted.
+    let err = guide
+        .ask(
+            noul("Is this urgent?").criteria(Rubric::new(" ").example("the site is down"), "no"),
+            "state",
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(err, guideme::Error::Config { .. }));
+    assert!(
+        guide
+            .ask(noul("Is this urgent?").criteria("", ""), "state")
+            .await
+            .is_ok()
+    );
     Ok(())
 }
