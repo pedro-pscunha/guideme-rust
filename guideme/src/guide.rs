@@ -46,15 +46,78 @@ struct Inner {
 /// Configures a [`Guide`].
 #[derive(Debug)]
 pub struct GuideBuilder {
-    api_key: Option<ApiKey>,
-    base_url: Option<String>,
+    transport: Transport,
     client: Option<Client>,
     model: Model,
     policy: Policy,
+    record_state: bool,
+}
+
+/// The settings that build a [`Client`], and that an injected one already carries.
+///
+/// They live in their own struct so the two places that care — the builder that fills them in
+/// and [`GuideBuilder::build`], which refuses them beside `client(..)` — name the same list
+/// once each. `build` destructures it exhaustively, so adding a sixth setter without deciding
+/// what it means beside an injected client is a compile error rather than a silent omission
+/// from the refusal.
+#[derive(Debug, Default)]
+struct Transport {
+    api_key: Option<ApiKey>,
+    base_url: Option<String>,
     max_retries: Option<u32>,
     backoff: Option<Duration>,
     timeout: Option<Duration>,
-    record_state: bool,
+}
+
+impl Transport {
+    /// The settings that were set, by the name of the setter that sets them.
+    fn named(&self) -> Vec<&'static str> {
+        let Self {
+            api_key,
+            base_url,
+            max_retries,
+            backoff,
+            timeout,
+        } = self;
+        [
+            ("api_key", api_key.is_some()),
+            ("base_url", base_url.is_some()),
+            ("max_retries", max_retries.is_some()),
+            ("backoff", backoff.is_some()),
+            ("timeout", timeout.is_some()),
+        ]
+        .into_iter()
+        .filter_map(|(name, was_set)| was_set.then_some(name))
+        .collect()
+    }
+
+    /// Build the client these settings describe, leaving every unset one at its default.
+    fn build(self) -> Result<Client, Error> {
+        let Self {
+            api_key,
+            base_url,
+            max_retries,
+            backoff,
+            timeout,
+        } = self;
+        let key = api_key.ok_or_else(|| Error::Config {
+            detail: "api_key is required".into(),
+        })?;
+        let mut client = Client::builder(key);
+        if let Some(n) = max_retries {
+            client = client.max_retries(n);
+        }
+        if let Some(d) = backoff {
+            client = client.backoff(d);
+        }
+        if let Some(d) = timeout {
+            client = client.timeout(d);
+        }
+        if let Some(url) = base_url {
+            client = client.base_url(url);
+        }
+        client.build()
+    }
 }
 
 impl Guide {
@@ -69,14 +132,10 @@ impl Guide {
     /// Start configuring a guide.
     pub fn builder() -> GuideBuilder {
         GuideBuilder {
-            api_key: None,
-            base_url: None,
+            transport: Transport::default(),
             client: None,
             model: Model::latest(),
             policy: Policy::new(),
-            max_retries: None,
-            backoff: None,
-            timeout: None,
             record_state: false,
         }
     }
@@ -346,12 +405,12 @@ impl GuideBuilder {
     /// The API key. Required unless [`from_env`](GuideBuilder::from_env) or
     /// [`client`](GuideBuilder::client) supplies one.
     pub fn api_key(mut self, key: ApiKey) -> Self {
-        self.api_key = Some(key);
+        self.transport.api_key = Some(key);
         self
     }
     /// Override the API origin.
     pub fn base_url(mut self, url: impl Into<String>) -> Self {
-        self.base_url = Some(url.into());
+        self.transport.base_url = Some(url.into());
         self
     }
     /// Send through this [`Client`] instead of building one from the settings below.
@@ -361,6 +420,10 @@ impl GuideBuilder {
     /// The client already carries the API key, the base URL, the retry budget, the backoff and
     /// the timeout, so setting any of those here as well is [`Error::Config`] at build time
     /// rather than a setting that quietly does nothing.
+    ///
+    /// [`from_env`](GuideBuilder::from_env) sets two of them — `api_key` always, `base_url`
+    /// when `TYPESAFE_BASE_URL` is present — so it does not combine with this. An injected
+    /// client is where the key belongs in that case: `api::Client::builder(key)`.
     pub fn client(mut self, client: Client) -> Self {
         self.client = Some(client);
         self
@@ -377,18 +440,18 @@ impl GuideBuilder {
     }
     /// Retries for `429`, `529` and a failure to connect; default 3.
     pub fn max_retries(mut self, n: u32) -> Self {
-        self.max_retries = Some(n);
+        self.transport.max_retries = Some(n);
         self
     }
     /// Base delay for exponential backoff; default 500 ms. The wait is `backoff * 2^attempt`
     /// plus jitter, capped at 30 s, and a `retry-after` the API sends wins over it.
     pub fn backoff(mut self, d: Duration) -> Self {
-        self.backoff = Some(d);
+        self.transport.backoff = Some(d);
         self
     }
     /// Timeout per attempt; default 30 s.
     pub fn timeout(mut self, d: Duration) -> Self {
-        self.timeout = Some(d);
+        self.transport.timeout = Some(d);
         self
     }
     /// Record the state JSON on the span. Off by default: state is user data.
@@ -399,43 +462,18 @@ impl GuideBuilder {
     /// Build. Validates the policy now so a bad house policy fails at startup.
     pub fn build(self) -> Result<Guide, Error> {
         let client = if let Some(client) = self.client {
-            let ignored: Vec<&str> = [
-                ("api_key", self.api_key.is_some()),
-                ("base_url", self.base_url.is_some()),
-                ("max_retries", self.max_retries.is_some()),
-                ("backoff", self.backoff.is_some()),
-                ("timeout", self.timeout.is_some()),
-            ]
-            .into_iter()
-            .filter_map(|(name, was_set)| was_set.then_some(name))
-            .collect();
+            let ignored = self.transport.named();
             if !ignored.is_empty() {
                 return Err(Error::Config {
                     detail: format!(
-                        "client(..) already carries the API key, the base URL and the retry, backoff and timeout settings, so {} would do nothing here; set it on api::Client::builder instead",
+                        "client(..) already carries the API key, the base URL and the retry, backoff and timeout settings, so {} would do nothing here; set it on api::Client::builder instead. from_env() sets api_key, and base_url when TYPESAFE_BASE_URL is present",
                         ignored.join(", ")
                     ),
                 });
             }
             client
         } else {
-            let key = self.api_key.ok_or_else(|| Error::Config {
-                detail: "api_key is required".into(),
-            })?;
-            let mut client = Client::builder(key);
-            if let Some(n) = self.max_retries {
-                client = client.max_retries(n);
-            }
-            if let Some(d) = self.backoff {
-                client = client.backoff(d);
-            }
-            if let Some(d) = self.timeout {
-                client = client.timeout(d);
-            }
-            if let Some(url) = self.base_url {
-                client = client.base_url(url);
-            }
-            client.build()?
+            self.transport.build()?
         };
         self.policy.settle()?;
         Ok(Guide {
