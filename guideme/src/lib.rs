@@ -81,5 +81,5 @@ pub use question::{
     Binary, Choose, Confident, Detailed, Fallible, Key, Kind, Levels, Noul, Options, Question,
     Rank, Ranked, Score, Scored, choose, choose_among, noul, score, score_levels,
 };
-pub use rubric::Rubric;
+pub use rubric::{IntoRubric, Rubric};
 pub use scalars::{ApiKey, Confidence, Instructions, Model, Probability, State};

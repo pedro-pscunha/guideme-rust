@@ -6,7 +6,7 @@ use std::marker::PhantomData;
 
 use crate::api::{self, MAX_LEVELS, MAX_OPTIONS, NoulCriteria};
 use crate::policy::{Outcome, Thresholds, Verdict};
-use crate::rubric::Rubric;
+use crate::rubric::{IntoRubric, Rubric};
 use crate::{Confidence, Error, Instructions, Policy, Probability};
 
 pub(crate) mod sealed {
@@ -475,9 +475,10 @@ impl<K: Fallible> Question<K> {
 }
 
 impl Question<Noul> {
-    /// Describe what a yes and a no mean. Takes a string, or a [`Rubric`] carrying examples.
-    pub fn criteria(mut self, yes: impl Into<Rubric>, no: impl Into<Rubric>) -> Self {
-        self.kind.criteria = Some((yes.into(), no.into()));
+    /// Describe what a yes and a no mean. Takes a description, or a [`Rubric`] carrying
+    /// examples.
+    pub fn criteria(mut self, yes: impl IntoRubric, no: impl IntoRubric) -> Self {
+        self.kind.criteria = Some((yes.into_rubric(), no.into_rubric()));
         self
     }
 }

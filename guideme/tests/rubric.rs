@@ -15,7 +15,7 @@
 //! this job: its vector is generated from the derive, so it re-states whatever the renderer
 //! currently does. `ROWS` is written by hand, which is the point.
 
-use guideme::{Choice, Guide, Levels, Rubric, choose, noul, score};
+use guideme::{Choice, Guide, Levels, Noul, Options, Question, Rubric, choose, noul, score};
 use proptest::prelude::*;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -62,6 +62,41 @@ enum Severity {
     /// No workaround exists
     Blocking,
 }
+
+/// The one overlap the rules must keep legal: the same string as an example of one option and
+/// a counterexample of another. This compiling is the assertion — the derive rejects an example
+/// shared by two options, and over-firing to this shape would break the pattern the whole
+/// feature exists to serve.
+#[derive(Choice, Clone, Copy, PartialEq, Eq, Debug)]
+enum Confusable {
+    /// Whether and how an item can be returned
+    #[guide(example = "Can I return these?")]
+    #[guide(counterexample = "Has my return arrived yet?")]
+    Policy,
+    /// Progress of a return already sent
+    #[guide(example = "Has my return arrived yet?")]
+    #[guide(counterexample = "Can I return these?")]
+    Status,
+}
+
+/// `criteria` took `impl Into<String>` in 0.1.0 and takes `impl IntoRubric` now. This block
+/// never runs; it compiling is the whole claim that the change breaks no caller, so deleting a
+/// line of it silently narrows the public API. The last one is the shape no set of `From`
+/// conversions can cover, because a generic bound is not a concrete type.
+const _: fn() = || {
+    fn passthrough<S: Into<String>>(yes: S, no: S) -> Question<Noul> {
+        noul("q").criteria(yes, no)
+    }
+    let mut owned = String::from("x");
+    let cow: std::borrow::Cow<'_, str> = std::borrow::Cow::Borrowed("x");
+    let boxed: Box<str> = "x".into();
+    let _ = noul("q").criteria("literal", format!("{owned}!"));
+    let _ = noul("q").criteria(owned.clone(), &owned);
+    let _ = noul("q").criteria(cow, boxed);
+    let _ = noul("q").criteria('y', owned.as_mut_str());
+    let _ = noul("q").criteria(Rubric::new("y").example("e"), Rubric::new("n"));
+    let _ = passthrough("a", "b");
+};
 
 /// `(what, examples, counterexamples, rendered)`, in the order the variants are declared
 /// above. Written out by hand: this is the expected side of the golden assertion.
@@ -121,15 +156,44 @@ fn runtime(what: &str, examples: &[&str], counterexamples: &[&str]) -> String {
     for counterexample in counterexamples {
         rubric = rubric.counterexample(*counterexample);
     }
-    rubric.into()
+    rubric.to_string()
+}
+
+/// The §9.5 pin. Two copies of the algorithm exist because `Options::RUBRIC` is a `const` and
+/// cannot call a function, so only this keeps them one algorithm. It is deliberately not part
+/// of the wire test: a pin that runs after a mock server has to start is a pin that stops
+/// running the day the mock server breaks.
+#[test]
+fn the_two_renderers_agree_on_every_golden_row() {
+    let derived: Vec<&str> = Golden::RUBRIC
+        .iter()
+        .chain(GoldenCounter::RUBRIC)
+        .map(|&(_, rubric)| rubric.expect("every golden variant has a rubric"))
+        .chain(Severity::LEVELS.iter().copied())
+        .collect();
+    assert_eq!(derived.len(), ROWS.len());
+    for (from_derive, (what, examples, counterexamples, want)) in derived.iter().zip(ROWS) {
+        assert_eq!(*from_derive, want, "the derive drifted on {what:?}");
+        assert_eq!(
+            runtime(what, examples, counterexamples),
+            want,
+            "Rubric drifted on {what:?}"
+        );
+    }
+    assert_eq!(
+        Confusable::RUBRIC[0].1,
+        Some(
+            "Whether and how an item can be returned\nExamples: Can I return these?\nNot this option: Has my return arrived yet?"
+        )
+    );
 }
 
 proptest! {
     /// The load-bearing invariant: a rubric with no parts is its own rendering, so a
     /// declaration written before examples existed puts the same bytes on the wire.
     #[test]
-    fn a_rubric_with_no_parts_renders_to_itself(what in "\\PC{0,64}") {
-        prop_assert_eq!(String::from(Rubric::new(&*what)), what);
+    fn a_rubric_with_no_parts_renders_to_itself(what in "(?s).{0,64}") {
+        prop_assert_eq!(Rubric::new(&*what).to_string(), what);
     }
 }
 
@@ -169,17 +233,6 @@ async fn the_rendered_rubric_is_what_reaches_the_wire() -> Result<(), Box<dyn st
         )
         .await?;
 
-    // The two renderers are ~10 duplicated lines, so nothing but a test keeps them one
-    // algorithm: every row below is asserted against the derive, through the request body,
-    // and against `Rubric`, here.
-    for (what, examples, counterexamples, want) in ROWS {
-        assert_eq!(
-            runtime(what, examples, counterexamples),
-            want,
-            "Rubric drifted from the derive on {what:?}"
-        );
-    }
-
     let received = server.received_requests().await.unwrap();
     let body: serde_json::Value = serde_json::from_slice(&received[0].body)?;
     assert_eq!(
@@ -209,14 +262,6 @@ async fn the_rendered_rubric_is_what_reaches_the_wire() -> Result<(), Box<dyn st
         body["questions"]["q3"]["criteria"],
         serde_json::json!([ROWS[6].3, ROWS[7].3])
     );
-
-    // `criteria` took `impl Into<String>` in 0.1.0 and takes `impl Into<Rubric>` now. These
-    // compiling is the whole claim that the change breaks no caller: one of every shape
-    // `String` converts from.
-    let owned = String::from("x");
-    let _ = noul("q").criteria("literal", String::from("owned"));
-    let _ = noul("q").criteria(&owned, std::borrow::Cow::Borrowed("cow"));
-    let _ = noul("q").criteria(Box::<str>::from("boxed"), 'c');
 
     // Examples attached to nothing never reach the wire: the same rule the derives enforce at
     // compile time, on the path where there is no declaration to reject. A blank description
