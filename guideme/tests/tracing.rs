@@ -8,6 +8,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use guideme::{Guide, Key, choose_among, noul};
 use tracing::field::{Field, Visit};
@@ -221,6 +222,52 @@ async fn one_ask_is_one_span_with_an_http_span_per_attempt()
     assert_eq!(e["guideme.outcome"], "billing");
     assert_eq!(e["guideme.confidence"], "0.81");
     assert!(!e.contains_key("guideme.probability"));
+    Ok(())
+}
+
+/// A port number that is real and free: bound so the OS picks a live one, then released.
+fn closed_port() -> u16 {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.local_addr().unwrap().port()
+}
+
+/// A refused connection never reached a server, so the request is safe to send again and is
+/// retried inside the same budget. The retry event says so with `error.type` in place of the
+/// status code it has no way to know — exactly one of the two is on every retry event.
+#[tokio::test]
+async fn a_refused_connection_is_retried_in_the_same_budget()
+-> Result<(), Box<dyn std::error::Error>> {
+    let capture = Capture::default();
+    let _guard = install(&capture);
+    let guide = Guide::builder()
+        .api_key("k".into())
+        .base_url(format!("http://127.0.0.1:{}", closed_port()))
+        .max_retries(2)
+        .backoff(Duration::from_millis(1))
+        .build()?;
+
+    let err = guide.ask(noul("Urgent?"), "state").await.unwrap_err();
+    assert_eq!(err.kind(), "transport");
+
+    let captured = capture.0.lock().unwrap();
+    let attempts = captured.spans_named("POST /v1/systemone");
+    assert_eq!(attempts.len(), 3);
+    for attempt in &attempts {
+        assert_eq!(attempt.fields["error.type"], "transport");
+        assert_eq!(attempt.fields["otel.status_code"], "ERROR");
+        assert!(!attempt.fields.contains_key("http.response.status_code"));
+    }
+    assert_eq!(attempts[2].fields["http.request.resend_count"], "2");
+
+    let retries = captured.events_named("guideme.retry");
+    assert_eq!(retries.len(), 2);
+    for (level, retry) in retries {
+        assert_eq!(*level, Level::WARN);
+        assert_eq!(retry["error.type"], "transport");
+        assert!(!retry.contains_key("http.response.status_code"));
+        assert!(retry.contains_key("guideme.retry.delay_ms"));
+    }
+    assert_eq!(captured.span("guideme.ask")["error.type"], "transport");
     Ok(())
 }
 

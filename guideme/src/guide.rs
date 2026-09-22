@@ -35,6 +35,7 @@ pub struct GuideBuilder {
     model: Model,
     policy: Policy,
     max_retries: u32,
+    backoff: Duration,
     timeout: Duration,
     record_state: bool,
 }
@@ -63,6 +64,7 @@ impl Guide {
             model: Model::latest(),
             policy: Policy::new(),
             max_retries: 3,
+            backoff: Duration::from_millis(500),
             timeout: Duration::from_secs(30),
             record_state: false,
         }
@@ -200,7 +202,7 @@ fn describe(error: &Error) -> String {
         }
         Error::Auth
         | Error::RateLimited { .. }
-        | Error::Overloaded
+        | Error::Overloaded { .. }
         | Error::Transport(_)
         | Error::Protocol { .. }
         | Error::Unsure { .. }
@@ -311,9 +313,15 @@ impl GuideBuilder {
         self.policy = policy;
         self
     }
-    /// Retries for `429`/`529`; default 3.
+    /// Retries for `429`, `529` and a failure to connect; default 3.
     pub fn max_retries(mut self, n: u32) -> Self {
         self.max_retries = n;
+        self
+    }
+    /// Base delay for exponential backoff; default 500 ms. The wait is `backoff * 2^attempt`
+    /// plus jitter, capped at 30 s, and a `retry-after` the API sends wins over it.
+    pub fn backoff(mut self, d: Duration) -> Self {
+        self.backoff = d;
         self
     }
     /// Timeout per attempt; default 30 s.
@@ -334,6 +342,7 @@ impl GuideBuilder {
         self.policy.settle()?;
         let mut client = Client::builder(key)
             .max_retries(self.max_retries)
+            .backoff(self.backoff)
             .timeout(self.timeout);
         if let Some(url) = self.base_url {
             client = client.base_url(url);

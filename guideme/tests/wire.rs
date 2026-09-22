@@ -204,8 +204,48 @@ async fn overload_exhausts_retries_then_fails() {
         .mount(&server)
         .await;
     let err = client(&server, 2).evaluate(&request()).await.unwrap_err();
-    assert!(matches!(err, Error::Overloaded));
+    assert!(matches!(err, Error::Overloaded { retry_after: None }));
     assert_eq!(server.received_requests().await.unwrap().len(), 3);
+
+    // A `retry-after` longer than the cap is not waited for on a 529 either, and the duration
+    // the API asked for comes back on the error instead of being dropped.
+    let patient = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(529).insert_header("retry-after", "60"))
+        .mount(&patient)
+        .await;
+    let err = client(&patient, 2).evaluate(&request()).await.unwrap_err();
+    assert!(
+        matches!(err, Error::Overloaded { retry_after: Some(d) } if d == Duration::from_secs(60)),
+        "the 529 should carry the header it parsed, got {err:?}"
+    );
+    assert_eq!(patient.received_requests().await.unwrap().len(), 1);
+}
+
+const MODELS: &str = r#"{"models":[{"name":"jev-latest","description":"The most recent stable release","release_date":"2026-08-01"}]}"#;
+
+/// The docs say the SDKs handle a throttle automatically, and they say it about the API, not
+/// about one endpoint: a `429` on a startup `models()` call used to fail the boot.
+#[tokio::test]
+async fn listing_models_is_retried_on_a_throttle() -> Result<(), Box<dyn std::error::Error>> {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/v1/models"))
+        .respond_with(ResponseTemplate::new(529))
+        .up_to_n_times(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/v1/models"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(MODELS))
+        .mount(&server)
+        .await;
+
+    let models = client(&server, 3).models().await?;
+    assert_eq!(models.len(), 1);
+    assert_eq!(models[0].name, "jev-latest");
+    assert_eq!(server.received_requests().await.unwrap().len(), 2);
+    Ok(())
 }
 
 #[tokio::test]
