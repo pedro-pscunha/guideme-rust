@@ -9,10 +9,13 @@
   unchanged. A rubric with no examples and no counterexamples renders to itself, byte for byte,
   so every 0.1.0 declaration puts the same bytes on the wire.
 - `Rubric`, a small builder for the rubric positions that are not an enum:
-  `Rubric::new(what).example(..).counterexample(..)` composes the same way and is
-  `Into<String>`, so `noul(..).criteria(yes, no)` takes it with no signature change and a plain
-  pair of strings keeps working. All three question kinds now take examples; a noul's
-  `true`/`false` criteria measured the largest swing of the three.
+  `Rubric::new(what).example(..).counterexample(..)` composes the same way. All three question
+  kinds now take examples; a noul's `true`/`false` criteria measured the largest swing of the
+  three. `noul(..).criteria(yes, no)` now takes `impl Into<Rubric>` rather than
+  `impl Into<String>`, which is source-compatible: a `Rubric` converts from everything `String`
+  converts from, so every 0.1.0 call still compiles. The change buys an error channel —
+  examples attached to a blank description are rejected with `Error::Config` when the question
+  is asked, which is the runtime half of the rule the derives enforce at compile time.
 - Declaration-time checks, each a compile error naming the rule: an empty or whitespace-only
   example or counterexample; a duplicate within one variant's examples; `counterexample` on a
   `Levels` derive; the same string as an example of two different variants; and the same string

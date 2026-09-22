@@ -448,6 +448,7 @@ version = "0.1.1"
 dependencies = [
  "heck",
  "proc-macro2",
+ "proptest",
  "quote",
  "syn 3.0.6",
 ]

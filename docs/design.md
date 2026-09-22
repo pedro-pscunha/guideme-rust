@@ -55,8 +55,9 @@ Each module survives the test.
   criteria carrying examples answer 0.25 — a 0.49 swing, to the correct answer, because one of
   the `false` examples is "a broken job with a manual workaround". A noul has no enum to hang
   attributes off, so the parts arrive as `Rubric`. It is a builder rather than a second
-  `criteria` method because `Question<Noul>::criteria` already takes `impl Into<String>`: a
-  `Rubric` drops in with no signature change and no breakage, and a plain `&str` keeps working.
+  `criteria` method: `criteria` widened from `impl Into<String>` to `impl Into<Rubric>`, and
+  `Rubric` converts from everything `String` converts from, so every existing call still
+  compiles. Widening rather than overloading is what gives the runtime path an error channel.
 - **`Not this option` is the measured label.** Four runs each on the confusable-options case,
   all three candidates correct 4/4: `Not this option` 0.865 mean probability on the right
   option, `Not` 0.845, `Counterexamples` 0.830.
@@ -88,9 +89,11 @@ Each module survives the test.
   counterexample of the same option. The same string as an example of one option and a
   counterexample of another stays legal: that is the confusable-options pattern the feature
   exists for, and `guideme/tests/live.rs` uses it.
-- **`Rubric` carries no declaration-time checks.** It is the runtime path, like `choose_among`,
-  where there is no declaration to reject and no `Result` to return from a builder that feeds
-  `impl Into<String>`. The compile errors live in the derive, where they can fire.
+- **`Rubric` is checked when the question is asked, not when it is built.** A builder has no
+  `Result` to return, so the check lives in `Noul::wire`, which already returns `Error::Config`
+  for the other malformed-question cases. It fires on the one rule that does not need a whole
+  declaration to see: examples attached to a blank description. The contradiction checks need
+  every variant at once and stay in the derive.
 - **A rubric with no examples renders to itself.** This is what keeps 0.1.1 non-breaking, and
   it is why `what` is never trimmed or re-punctuated. `spec/vectors/rubric.json` pins it, and
   `guideme-derive` property-tests it.

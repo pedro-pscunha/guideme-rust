@@ -92,7 +92,9 @@ exists for.
 An empty or whitespace-only rubric is rejected **only where examples were attached to it** —
 you described nothing. A rubric that carries neither keeps whatever an SDK did before this
 feature existed, because rejecting it would be a new error for a declaration that has nothing
-to do with examples.
+to do with examples. That line holds on the runtime paths too, wherever the language cannot
+reach a declaration: Python refuses `option("", examples=[…])` when it is constructed, Rust
+returns `Error::Config` when the question carrying it is asked.
 
 ## 4. Interface shape
 
