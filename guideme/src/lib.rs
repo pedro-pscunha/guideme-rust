@@ -67,6 +67,7 @@ mod error;
 mod guide;
 pub mod policy;
 mod question;
+mod rubric;
 mod scalars;
 #[doc(hidden)]
 pub mod spec;
@@ -80,4 +81,5 @@ pub use question::{
     Binary, Choose, Confident, Detailed, Fallible, Key, Kind, Levels, Noul, Options, Question,
     Rank, Ranked, Score, Scored, choose, choose_among, noul, score, score_levels,
 };
+pub use rubric::Rubric;
 pub use scalars::{ApiKey, Confidence, Instructions, Model, Probability, State};
