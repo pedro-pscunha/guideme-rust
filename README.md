@@ -1,19 +1,29 @@
-# guideme
+# guideme (Rust)
 
 [![crates.io](https://img.shields.io/crates/v/guideme.svg)](https://crates.io/crates/guideme)
 [![docs.rs](https://docs.rs/guideme/badge.svg)](https://docs.rs/guideme)
 [![license](https://img.shields.io/crates/l/guideme.svg)](#license)
 
-Judgments from [TypeSafe Jev](https://docs.typesafe.ai) that read like Rust control flow.
+guideme is a Rust library for [TypeSafe Jev](https://docs.typesafe.ai), the TypeSafe model that
+gives judgments. You send a question and your state, and you get the answer back as a normal
+Rust value. A yes/no question gives a `bool`. A choice gives a variant of your own enum, and a
+score gives one of your own ordered levels.
 
-A yes/no question is an `if`. A choice is an exhaustive `match` over your own enum. A score is
-a comparison against your own ordered levels. Thresholds, unsure bands and fallbacks are
-explicit and composable. Every request is one tracing span. The decision logic is pure and
-its contract is published under `spec/`, so every guideme SDK, in any language, answers the
-same way.
+## Install
+
+```sh
+cargo add guideme
+cargo add tokio --features rt-multi-thread,macros
+```
+
+guideme needs Rust 1.98 or newer. The crate includes `#[derive(Choice)]` and
+`#[derive(Levels)]`, so do not add `guideme-derive` yourself. Set the API key in the
+`TYPESAFE_API_KEY` environment variable, or give it to `Guide::builder().api_key(..)`.
+
+## Quick start
 
 ```rust,no_run
-use guideme::{choose, noul, score, Choice, Guide, Levels};
+use guideme::{choose, noul, Choice, Guide};
 
 #[derive(Choice, Clone, Copy, PartialEq, Eq, Debug)]
 enum Department {
@@ -26,16 +36,6 @@ enum Department {
     Sales,
 }
 
-#[derive(Levels, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
-enum Frustration {
-    /// Calm and polite
-    Calm,
-    /// Frustrated
-    Frustrated,
-    /// Very angry
-    VeryAngry,
-}
-
 async fn triage(ticket: &str) -> Result<(), guideme::Error> {
     let guide = Guide::from_env()?; // reads TYPESAFE_API_KEY
 
@@ -46,169 +46,93 @@ async fn triage(ticket: &str) -> Result<(), guideme::Error> {
     match guide.ask(choose::<Department>("Which team should handle this?"), ticket).await? {
         Department::Billing => {}
         Department::Technical => {}
-        Department::Sales => {} // also the answer when confidence is below the floor
-    }
-
-    if guide.ask(score::<Frustration>("How frustrated is the customer?"), ticket).await?
-        >= Frustration::Frustrated
-    {
-        // prioritise
+        Department::Sales => {} // also the answer when the model is not sure
     }
     Ok(())
 }
 ```
 
-The doc comment on each variant is the rubric the model reads. The variant name in
-`snake_case` is the wire key. The compiler enforces that every option is handled.
+The doc comment on each variant is its *rubric*: the text that tells the model what the option
+means. The variant name in `snake_case` is the key of the option on the wire. The compiler makes
+sure that the `match` handles every option.
 
-## Examples in a rubric
+When your program starts, build one guide. Then share it in the whole program. A `Guide` is
+cheap to clone, and the clones share one HTTP client.
 
-A description alone leaves confusable options to a coin flip. Name the inputs that belong to
-an option, and the ones that do not:
+## Questions
 
-```rust
-use guideme::Choice;
+A yes/no question is what TypeSafe calls a *noul*, and `noul` is its type on the wire. A choice
+has one of your options as its answer. A score has one level of your ordered scale as its answer.
 
-#[derive(Choice, Clone, Copy, PartialEq, Eq, Debug)]
-enum Department {
-    /// Payments, invoicing, refunds
-    #[guide(example = "My card was charged twice", example = "Where is my refund?")]
-    #[guide(counterexample = "The dashboard is down")]
-    Billing,
-    /// Bugs, outages, integrations
-    #[guide(example = "502 on every request")]
-    Technical,
-    /// Pricing, upgrades, new accounts
-    #[guide(fallback, example = "Do you have a team plan?")]
-    Sales,
-}
-```
-
-`Billing` reaches the wire as one string:
-
-```text
-Payments, invoicing, refunds
-Examples: My card was charged twice; Where is my refund?
-Not this option: The dashboard is down
-```
-
-Both keys are repeatable and compose with `rubric`, `key` and `fallback`. A variant with
-neither renders to its rubric unchanged, byte for byte, so nothing you wrote before moves.
-
-`example` works on `#[derive(Levels)]` too, where an example *is* the statement that such an
-input scores at that level — its position on the scale carries the number, so nothing is added
-to the text. `counterexample` is a choice key only: a level is a position on a scale, not an
-option to rule out, and asking for one is a compile error. So are an empty or duplicated
-example, an example on a variant with no rubric to attach it to, and an example that claims an
-input belongs to two options at once. The same string as an example of one option and a
-counterexample of another is exactly the point, and stays legal.
-
-A noul has no enum to hang attributes off, so it takes `Rubric`, which composes the same way:
-
-```rust,no_run
-use guideme::{noul, Guide, Rubric};
-
-async fn urgent(guide: &Guide, ticket: &str) -> Result<bool, guideme::Error> {
-    guide.ask(
-        noul("Is this ticket urgent?").criteria(
-            Rubric::new("Something is broken now and nobody can work around it")
-                .example("the checkout page is down")
-                .counterexample("a nightly job failed and we pull the numbers by hand for now"),
-            Rubric::new("It can wait for the next working day"),
-        ),
-        ticket,
-    ).await
-}
-```
-
-This is where examples earn the most: on that ticket, plain criteria answer 0.75 and these
-answer 0.25 — and 0.25 is right. `criteria` accepts a description or a `Rubric`, and a
-description is anything `String` converts from, so a plain pair of strings keeps working
-unchanged.
-
-## Install
-
-```sh
-cargo add guideme
-cargo add tokio --features rt-multi-thread,macros
-```
-
-or in `Cargo.toml`:
-
-```toml
-[dependencies]
-guideme = "0.2"
-tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
-```
-
-Rust 1.98 or newer. `#[derive(Choice)]` and `#[derive(Levels)]` come with the crate; you
-never depend on `guideme-derive` yourself.
-
-Set `TYPESAFE_API_KEY` in the environment, or pass a key to `Guide::builder().api_key(..)`.
-
-## The three questions
-
-| Constructor | Sends | Plain output | `.detail()` output |
+| Constructor | Asks | Plain answer | Answer with `.detail()` |
 |---|---|---|---|
 | `noul("…")` | a yes/no question | `bool` | `Verdict::{Yes, No, Unsure}(p)` |
-| `choose::<C>("…")` where `C: Choice` | a choice over `C`'s variants | `C` | `Ranked<C>` with confidence and the full distribution |
-| `score::<L>("…")` where `L: Levels` | a score over `L`'s levels, low to high | `L`, the most probable level | `Scored<L>` with the expected `value`, the level, confidence and distribution |
-| `choose_among("…", options)` | a choice over runtime `(key, rubric)` pairs | `Key` | `Ranked<Key>` |
-| `score_levels("…", levels)` | a score over runtime level descriptions | `Rank` | `Scored<Rank>` |
+| `choose::<C>("…")`, `C: Choice` | a choice over the variants of `C` | `C` | `Ranked<C>`: confidence and all probabilities |
+| `score::<L>("…")`, `L: Levels` | a score over the levels of `L` | `L`, the most probable level | `Scored<L>`: the expected `value`, the level, confidence and distribution |
+| `choose_among("…", options)` | a choice over `(key, rubric)` pairs that you give at run time | `Key`, the option key | `Ranked<Key>` |
+| `score_levels("…", levels)` | a score over level rubrics that you give at run time | `Rank`, the level position from 0 | `Scored<Rank>` |
 
-A noul can carry `.criteria("what yes means", "what no means")`. Instructions accept a string
-or a `serde_json::Value`, so a question can reference structured data by field name the way
-the TypeSafe docs describe.
-
-The runtime pair takes a description or a `Rubric` in every rubric position, so options and
-levels that come from a database carry examples the same way a derived enum does:
+The levels of a score go from low to high in declaration order. Derive `PartialOrd` and `Ord` to
+compare them:
 
 ```rust,no_run
-use guideme::{choose_among, Guide, Key, Rubric};
+use guideme::{score, Guide, Levels};
 
-async fn desk(guide: &Guide, ticket: &str) -> Result<Key, guideme::Error> {
-    guide.ask(choose_among("Which desk?", [
-        ("returns", Some(Rubric::new("Whether an item can be returned")
-            .example("Can I return these?")
-            .counterexample("Has my return arrived yet?"))),
-        ("tracking", Some(Rubric::new("Progress of a return already sent")
-            .example("Has my return arrived yet?"))),
-    ]), ticket).await
+#[derive(Levels, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+enum Frustration {
+    /// Calm and polite
+    Calm,
+    /// Frustrated
+    Frustrated,
+    /// Very angry
+    VeryAngry,
+}
+
+async fn is_upset(guide: &Guide, ticket: &str) -> Result<bool, guideme::Error> {
+    let mood = guide.ask(score::<Frustration>("How frustrated is the customer?"), ticket).await?;
+    Ok(mood >= Frustration::Frustrated)
 }
 ```
 
-One list has one rubric type, so a list where every option is bare needs it named once:
-`[("a", None::<&str>), ("b", None)]`. The rules are checked when the question is asked, and
-they are the derives' rules: a shared example, an empty or duplicated one, a counterexample on
-a level. A declaration the derive accepts is accepted here, and one it rejects is rejected
-here.
+A yes/no question can carry `.criteria("what yes means", "what no means")`. The instructions of
+a question are a string or a `serde_json::Value`. With a `Value`, a question can name fields of
+a structured state, as the TypeSafe docs describe.
 
-The state is anything serialisable: a text literal, a `String`, a `serde_json::Value`, or a
-reference to your own struct.
+The *state* is the data that you send with the question. It can be a text literal, a `String`,
+a `serde_json::Value`, or a reference to any type that implements `Serialize`. An owned struct
+is not accepted, so pass a reference. If the state does not convert to JSON (a map with keys
+that are not strings, for example), `ask` returns `Error::Config`.
 
-## Policy
+`guide.models()` returns the models that your account can use.
 
-Thresholds decide how a probability or a confidence becomes an answer. They form a patch that
-merges from the question, over the guide, over the crate defaults.
+## When the model is not sure
 
-| Layer | How to set | Wins over |
-|---|---|---|
-| question | `.yes_above(p)`, `.no_below(p)` on nouls; `.min_confidence(c)` on choice and score; `.with(Policy)` on any | guide |
-| guide | `Guide::builder().policy(..)`, or `guide.with_policy(..)?` for a scoped copy | defaults |
-| defaults | `yes_above 0.5`, `no_below 0.5`, `min_confidence 0.0` | nothing |
+*Unsure* means that the answer is not certain enough under the thresholds. The *policy* is the
+set of thresholds. A threshold on the question wins over the guide, and the guide wins over the
+defaults.
 
-The rules:
+| Layer | How to set it |
+|---|---|
+| question | `.yes_above(p)` and `.no_below(p)` on a yes/no question, `.min_confidence(c)` on a choice or a score, `.with(Policy)` on any question |
+| guide | `Guide::builder().policy(..)`, or `guide.with_policy(..)?` for a copy with a different policy |
+| defaults | `yes_above` 0.5, `no_below` 0.5, `min_confidence` 0.0 |
 
-- Noul: `p >= yes_above` is yes, `p <= no_below` is no, strictly between is unsure. With the
-  defaults there is no unsure band.
-- Choice and score: `confidence < min_confidence` is unsure. With the default there is never
-  an unsure answer.
+- Yes/no question: `p >= yes_above` is yes, `p <= no_below` is no, and a value between the two
+  is unsure. With the defaults, no answer is unsure.
+- Choice and score: `confidence < min_confidence` is unsure. With the default, no answer is
+  unsure.
+- A threshold outside 0..1, or `no_below` above `yes_above`, is `Error::Config`.
 
-When an answer is unsure, resolution goes down a ladder: `.or(value)` on the question, then
-the enum's `#[guide(fallback)]` variant, then `Error::Unsure` naming the question and the
-boundary it missed. `.detail()` skips the ladder and hands you the reading to decide yourself.
+An unsure answer goes down the *unsure ladder*. The first step that applies wins:
 
-House policies are constants, because the setters are `const fn`:
+1. The value from `.or(value)` on the question.
+2. The *fallback*: the variant marked `#[guide(fallback)]`. Only a choice can declare one. For
+   a score, use `.or(level)`.
+3. `Error::Unsure`, with the question id, the value and the threshold that it did not reach.
+
+`.detail()` skips the ladder and gives you the full reading, so it never fails on an unsure
+answer. It also removes an `.or(..)` that you set before it. The policy setters are `const fn`,
+so a house policy can be a constant:
 
 ```rust,no_run
 use guideme::{noul, ApiKey, Guide, Policy, Verdict};
@@ -228,120 +152,152 @@ async fn route(key: ApiKey, ticket: &str) -> Result<(), guideme::Error> {
 }
 ```
 
-## Several judgments, one request
+## Examples and counterexamples
 
-A tuple of questions is a question. So is a `Vec` or a `BTreeMap`, and they nest. The answer
-has the same shape, from one request and one span. Each question keeps its own policy.
+A description alone can leave two similar options to chance. An *example* is an input that
+belongs to an option. A *counterexample* is an input that does not.
+
+```rust
+use guideme::Choice;
+
+#[derive(Choice, Clone, Copy, PartialEq, Eq, Debug)]
+enum Department {
+    /// Payments, invoicing, refunds
+    #[guide(example = "My card was charged twice", example = "Where is my refund?")]
+    #[guide(counterexample = "The dashboard is down")]
+    Billing,
+    /// Bugs, outages, integrations
+    #[guide(example = "502 on every request")]
+    Technical,
+    /// Pricing, upgrades, new accounts
+    #[guide(fallback, example = "Do you have a team plan?")]
+    Sales,
+}
+```
+
+The rubric of `Billing` goes on the wire as one string:
+
+```text
+Payments, invoicing, refunds
+Examples: My card was charged twice; Where is my refund?
+Not this option: The dashboard is down
+```
+
+- `example` and `counterexample` can repeat. They combine with `rubric`, `key` and `fallback`.
+- A rubric with no examples and no counterexamples goes on the wire unchanged, byte for byte.
+- A level can have examples, but not a counterexample.
+- An input cannot be an example of two options, or an example and a counterexample of one option.
+- An example cannot be empty, repeat, contain a line break, or sit on a variant with no rubric.
+- An input can be an example of one option and a counterexample of another. This separates two
+  options that are easy to confuse.
+
+The derives refuse a broken rule at compile time. When you ask the question, `.criteria`,
+`choose_among` and `score_levels` apply the same rules and return `Error::Config`. These three
+take a `Rubric` or a plain description (anything that converts to `String`) as a rubric:
 
 ```rust,no_run
-# use guideme::{Choice, Levels};
-# #[derive(Choice, Clone, Copy, PartialEq, Eq, Debug)]
-# enum Department { /** Payments */ Billing, /** Bugs */ Technical }
-# #[derive(Levels, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
-# enum Frustration { /** Calm */ Calm, /** Angry */ Angry }
+use guideme::{noul, Guide, Rubric};
+
+async fn urgent(guide: &Guide, ticket: &str) -> Result<bool, guideme::Error> {
+    let question = noul("Is this ticket urgent?").criteria(
+        Rubric::new("Something is broken now and nobody can work around it")
+            .example("the checkout page is down")
+            .counterexample("a nightly job failed and we pull the numbers by hand for now"),
+        Rubric::new("It can wait for the next working day"),
+    );
+    guide.ask(question, ticket).await
+}
+```
+
+One list has one rubric type. If no option in a list has a rubric, name the type once:
+`[("a", None::<&str>), ("b", None)]`.
+
+## Several questions in one request
+
+A tuple of questions is also a question. So is a `Vec` or a `BTreeMap` of questions, and they
+can nest. The answer has the same shape, and it comes from one request in one span. Each
+question keeps its own policy.
+
+```rust,no_run
 use std::collections::BTreeMap;
 
-use guideme::{choose, noul, score, Guide};
+use guideme::{choose_among, noul, score_levels, Guide};
 
 async fn triage(guide: &Guide, ticket: &str) -> Result<(), guideme::Error> {
-    let labels = BTreeMap::from([
-        ("spam", noul("Is it spam?")),
-        ("vip", noul("Is the sender a VIP?")),
-    ]);
+    let flags = BTreeMap::from([("spam", noul("Is it spam?")), ("vip", noul("Is it a VIP?"))]);
+    let desks = [("returns", Some("Returns of items")), ("tracking", Some("Where a parcel is"))];
 
-    let (urgent, dept, mood, flags) = guide.ask((
+    let (urgent, desk, mood, flags) = guide.ask((
         noul("Is this urgent?").yes_above(0.7).no_below(0.3).or(false),
-        choose::<Department>("Which team?").min_confidence(0.6),
-        score::<Frustration>("How frustrated?").detail(),
-        labels,                                      // comes back as BTreeMap<&str, bool>
+        choose_among("Which desk?", desks).min_confidence(0.6),
+        score_levels("How frustrated?", ["calm", "annoyed", "angry"]).detail(),
+        flags, // comes back as BTreeMap<&str, bool>
     ), ticket).await?;
 
     if urgent || mood.value > 1.5 || flags["vip"] {
-        // prioritise
+        println!("prioritize, send to {}", desk.0);
     }
     Ok(())
 }
 ```
 
-Question ids are `q0..qN` in encounter order; they appear on the wire, in errors and in
-events. A batch is atomic: one answer that cannot be resolved fails the whole call, so put
-`.or(..)` or `.detail()` on the questions that may come back unsure.
-
-## Observability
-
-guideme emits `tracing` spans and events and installs nothing: no subscriber, no file, no
-exporter. Add a subscriber and it appears. The smallest one:
-
-```rust,no_run
-tracing_subscriber::fmt().with_env_filter("warn,guideme=info").init();
-```
-
-One `tracing` span named `guideme.ask` per request, shaped by the OpenTelemetry GenAI
-conventions: `gen_ai.request.model`, `gen_ai.response.model`, `gen_ai.usage.*`, and on
-failure `error.type` with an error status. Under it, one HTTP client span per attempt with
-`http.response.status_code`, so a retry is visible as sibling spans, plus a `WARN` event when
-an attempt is throttled. One `guideme.answer` event per question with the outcome, the
-probability or confidence, the unsure verdict and the settled thresholds that produced it.
-The state is never recorded unless you opt in with `record_state(true)`. The API key never
-appears anywhere.
-
-Because the shapes are standard, any OTLP backend reads them as is, and events exported as
-OTLP log records carry the trace and span id of the ask they belong to. `docs/observability.md`
-has the field tables, the `RUST_LOG` matrix, the environment variables that point the
-exporter anywhere, and console and OTLP setups. `examples/otlp` runs all of it against the
-live API with a collector that prints what arrives.
-
-## Errors
-
-One enum, `guideme::Error`, for everything:
-
-| Variant | When |
-|---|---|
-| `Auth` | 401 |
-| `Invalid { detail }` | 422, body included |
-| `RateLimited { retry_after }` | 429 after retries, or a `retry-after` too long to wait for |
-| `Overloaded { retry_after }` | 529, same |
-| `Transport(..)` | connection, TLS, timeout |
-| `UnexpectedStatus { status, body }` | anything the contract does not define |
-| `Protocol { detail }` | the response violates the contract: undecodable body, wrong answer kind, option or level not in the rubric, probability outside 0..1 |
-| `Unsure { question, value, threshold }` | the policy said unsure and nothing caught it |
-| `Config { detail }` | bad thresholds, missing key, empty batch, unserialisable state, empty or duplicate rubric, a setting that an injected client already carries |
-
-Retries use exponential backoff with jitter, capped at 30 s, and honour `retry-after`. What is
-retried: 429, 529, and a request that never reached a server — a refused or reset connection, a
-TLS handshake failure. Both endpoints, so a throttle on a startup `models()` call does not fail
-the boot. What is not: **a timeout of any phase**, or a body failure. `timeout` is one deadline
-over the whole attempt, so a connect-phase timeout cannot be told apart from a read timeout,
-and retrying either would multiply the wall time that setting promises.
-
-Hand in your own client with `http(..)` and the classification is that client's: guideme still
-retries what `reqwest` reports as a connection failure, so a `connect_timeout` set on your
-client makes connect timeouts retryable. guideme never sets one.
+The question ids are `q0`, `q1` and so on, in the order that you wrote the questions. The ids
+appear on the wire, in errors and in events. A batch is atomic. If one answer cannot be
+resolved, the whole call fails. Put `.or(..)` or `.detail()` on each question that can be unsure.
 
 ## The receipt
 
-`ask` returns the answer. `ask_with_receipt` returns the same answer plus what the response
-said about itself: the versioned model that produced it, and the tokens it cost.
+`ask_with_receipt` sends the same request and records the same span as `ask`. It returns a
+`Receipt`: the answer, the versioned model that answered, and the token usage. If you asked for
+an alias, the model is still a version such as `jev-1.13.0`. Input tokens are the billed ones.
 
 ```rust,no_run
-# use guideme::Choice;
-# #[derive(Choice, Clone, Copy, PartialEq, Eq, Debug)]
-# enum Department { /** Payments */ Billing, /** Bugs */ Technical }
-use guideme::{choose, Guide};
-
-async fn cost(guide: &Guide, ticket: &str) -> Result<Department, guideme::Error> {
-    let receipt = guide.ask_with_receipt(choose::<Department>("Which team?"), ticket).await?;
-    // input tokens are the billed ones; the model is the version that answered
-    println!("{} tokens from {}", receipt.usage.input_tokens, receipt.model.as_str());
+async fn escalate(guide: &guideme::Guide, ticket: &str) -> Result<bool, guideme::Error> {
+    let question = guideme::noul("Should this be escalated?");
+    let receipt = guide.ask_with_receipt(question, ticket).await?;
+    println!("{} input tokens from {}", receipt.usage.input_tokens, receipt.model.as_str());
     Ok(receipt.answer)
 }
 ```
 
-Same request, same span, same fields. `ask` is this with everything but the answer dropped.
+## Errors
+
+Every function returns `guideme::Error`. `error.kind()` gives the *error kind*, a short stable
+name that is also the `error.type` of a failed span. `Error` is `#[non_exhaustive]`, so a
+`match` on it needs a `_` arm.
+
+| Variant | Error kind | When |
+|---|---|---|
+| `Auth` | `auth` | `401`: the API key is missing or not valid |
+| `Invalid { detail }` | `invalid` | `422`, with the response body |
+| `RateLimited { retry_after }` | `rate_limited` | `429` after the last retry, or a `retry-after` of more than 30 s |
+| `Overloaded { retry_after }` | `overloaded` | `529` after the last retry, or a `retry-after` of more than 30 s |
+| `Transport(..)` | `transport` | connection, TLS, timeout, or reading the body |
+| `UnexpectedStatus { status, body }` | `unexpected_status` | a status that the contract does not define |
+| `Protocol { detail }` | `protocol` | the response breaks the contract: a body that does not decode, the wrong answer kind, an option or level not in the rubric, a probability outside 0..1, a missing answer |
+| `Unsure { question, value, threshold }` | `unsure` | the answer is unsure and nothing on the unsure ladder caught it |
+| `Config { detail }` | `config` | bad thresholds, no API key, an empty batch, a state that does not convert to JSON, a rubric that breaks a rule, a base URL with no host or with credentials, a setting that an injected client already carries |
+
+## Retries and timeouts
+
+guideme retries `429`, `529`, and a request that did not reach a server. A refused or reset
+connection and a failed TLS handshake are requests of that type. This applies to both
+endpoints, so a `429` on a `models()` call at startup does not stop your program. guideme does
+not retry a timeout of any phase, or a failure to read the body. [`docs/contract.md`](docs/contract.md) gives the reason.
+
+The wait before a retry is `backoff × 2^attempt`, plus up to 250 ms of jitter, with a maximum of
+30 s. If the API sends a `retry-after` in whole seconds, guideme waits that long instead. If the
+`retry-after` is more than 30 s, the call fails at once, and the error carries that duration.
+`timeout` is one deadline for each attempt, so the longest call takes about
+`(max_retries + 1) × timeout`, plus the waits.
+
+If you give guideme your own `reqwest::Client`, that client classifies its errors. guideme still
+retries what `reqwest` reports as a failure to connect. So a `connect_timeout` on your client
+makes a connect timeout a retry. guideme itself never sets a `connect_timeout`.
 
 ## Testing your code
 
-Point the guide at a mock server and your control flow runs without a network or an API key.
+Point the guide at a mock server. Then your control flow runs without a network or an API key.
 
 ```rust
 use guideme::{noul, Guide};
@@ -373,13 +329,12 @@ async fn an_urgent_ticket_is_escalated() -> Result<(), Box<dyn std::error::Error
 }
 ```
 
-`wiremock = "0.6"` goes in your `[dev-dependencies]`; guideme does not pull it in for you.
+Add `wiremock = "0.6"` to your `[dev-dependencies]`. guideme does not add it for you. In the
+mock body, the answer ids are `q0`, `q1` and so on, in question order. Use
+`server.received_requests()` to make sure that guideme sent the correct request.
 
-Question ids are `q0..qN` in encounter order, so a batch answers `q0`, `q1` and so on in the
-order you wrote it. `server.received_requests()` is how you assert on what was sent.
-
-For a proxy, a client certificate, or a transport shared with the rest of the application,
-hand in the client instead:
+To replace the *transport*, give guideme your own `reqwest::Client`. Do this for a proxy, a
+client certificate, or a connection pool that the rest of your program shares:
 
 ```rust
 use std::time::Duration;
@@ -397,87 +352,86 @@ fn configured() -> Result<Guide, Box<dyn std::error::Error>> {
 }
 ```
 
-`guideme::api::reqwest` is the `reqwest` guideme links, re-exported so you do not add a
-dependency of your own and do not have to keep a version in step: two `reqwest` majors in one
-tree are two unrelated `Client` types and the call would not compile. The flip side is that a
-`reqwest` major bump is a breaking change for guideme.
+Set the timeout on the `reqwest` client. `timeout(..)` beside `http(..)` is `Error::Config`. The
+`Client` carries the API key, the base URL, the retries, the backoff and the timeout. If you
+also set one of these on `Guide::builder()`, `build` returns `Error::Config` with its name. For
+this reason, `Guide::builder().from_env()` does not combine with `client(..)`.
 
-Everything the client carries — the key, the base URL, the retry budget, the backoff, the
-timeout — is refused by name if you also set it on the guide builder, so a setting never
-quietly does nothing.
+## Observability
+
+guideme emits `tracing` spans and events. It installs no subscriber, no file and no exporter, so
+you see nothing until you add a subscriber. This is the smallest one:
+
+```rust,no_run
+tracing_subscriber::fmt().with_env_filter("warn,guideme=info").init();
+```
+
+Each request is one `guideme.ask` span with the OpenTelemetry GenAI fields. Under it, each HTTP
+attempt is one span, with a `guideme.retry` warning before each wait. Each question gives one
+`guideme.answer` event with the outcome and the thresholds. The state is recorded only with
+`record_state(true)`. The API key never appears.
+[`docs/observability.md`](docs/observability.md) has the field tables, the `RUST_LOG` matrix,
+and console and OTLP setups. `examples/otlp` runs it all against the live API.
+
+## Configuration
+
+Each *setting* is a method on `Guide::builder()`.
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `api_key(key)` | none | required, unless `from_env` or `client` gives the key |
+| `base_url(url)` | `https://api.typesafe.ai` | the API origin |
+| `model(Model)` | `jev-latest` | the model or alias |
+| `policy(Policy)` | the defaults above | the policy for every question of this guide |
+| `max_retries(n)` | 3 | retries for `429`, `529` and a failure to connect |
+| `backoff(d)` | 500 ms | the base of the exponential wait |
+| `timeout(d)` | 30 s | the deadline for each attempt |
+| `record_state(on)` | `false` | record the state on the span |
+| `client(Client)` | none | a `guideme::api::Client` with your own transport |
+
+| Environment variable | Meaning |
+|---|---|
+| `TYPESAFE_API_KEY` | the API key, required by `from_env` |
+| `TYPESAFE_BASE_URL` | optional, replaces the API origin |
+| `GUIDEME_MODEL` | optional, the model or alias |
+
+`Guide::from_env()?` reads the three variables and builds the guide. `Guide::builder().from_env()?`
+reads them onto a builder that you continue to configure:
+`Guide::builder().from_env()?.policy(CAUTIOUS).build()?`. `build` validates the policy, so a bad
+house policy fails at startup. Build one guide for each process and share it.
 
 ## Lower layers
 
 - `guideme::api` is the exact wire mirror of `POST /v1/systemone` and `GET /v1/models`, plus
-  `Client` for callers who want to build requests themselves.
+  `Client` for callers who build requests themselves.
+- `guideme::api::reqwest` is the `reqwest` that guideme links. Use it, and you need no
+  `reqwest` dependency of your own. Two major versions of `reqwest` give two unrelated `Client`
+  types, and the call does not compile. So a major `reqwest` update is a breaking change for guideme.
 - `guideme::policy::resolve(&Answer, Thresholds) -> Outcome` is the pure decision function.
-  `spec/` holds its JSON Schemas, 42 golden policy vectors and the rubric rendering cases;
-  `docs/contract.md` states what every guideme SDK must satisfy. `docs/design.md` records the
-  design and its sharp edges.
+- [`docs/design.md`](docs/design.md) records the design decisions, the measurements behind them,
+  and the sharp edges.
 
 ## Other SDKs
 
-Every guideme SDK is written from scratch in its own language and answers the same way,
-because they all satisfy the contract this repository publishes under `spec/` and states in
-[`docs/contract.md`](docs/contract.md): the wire schemas, the 42 golden policy vectors, the
-rubric rendering, and the interface shape.
+Each guideme SDK is written from scratch in its own language. All three satisfy the contract
+that this repository publishes under `spec/` and states in [`docs/contract.md`](docs/contract.md).
+The contract covers the wire schemas, the 42 golden policy vectors, the rubric rendering and the
+interface shape. So the same response gives the same answer in each SDK. All three use the same
+span, event and field names, so one dashboard reads all of them.
 
 | Language | Package | Repository |
 |---|---|---|
 | Rust | [`guideme`](https://crates.io/crates/guideme) | this repository |
 | Python | [`guideme`](https://pypi.org/project/guideme/) | [guideme-python](https://github.com/pedro-pscunha/guideme-python) |
-
-The Python SDK mirrors the verbs in Python's idiom: `Choice` and `Levels` are `enum.Enum`
-bases whose members carry the rubric, `.or(value)` is `.otherwise(value)` because `or` is a
-keyword, and `Guide` and `AsyncGuide` share one surface. It emits the same span, event and
-attribute names, so one dashboard reads both.
-
-## Environment
-
-| Variable | Meaning |
-|---|---|
-| `TYPESAFE_API_KEY` | required by `Guide::from_env` |
-| `TYPESAFE_BASE_URL` | optional API origin override |
-| `GUIDEME_MODEL` | optional model or alias; default `jev-latest` |
-
-`Guide::from_env()?` is the one-liner. `Guide::builder().from_env()?` reads the same three
-variables onto a builder you are still configuring, so a house policy and an environment key
-compose: `Guide::builder().from_env()?.policy(CAUTIOUS).build()?`.
-
-The rest of the builder: `model`, `policy`, `max_retries` (default 3), `backoff` (default
-500 ms, the base of the exponential), `timeout` (default 30 s, per attempt), `record_state`,
-and `client` for an injected transport.
+| TypeScript | `@guideme/sdk` (not yet on npm) | [guideme-typescript](https://github.com/pedro-pscunha/guideme-typescript) |
 
 ## Development
 
-Tooling is managed by [mise](https://mise.jdx.dev); `mise install` fetches gitleaks,
-cargo-nextest and cargo-deny. The toolchain is pinned in `rust-toolchain.toml`.
-
-```sh
-mise run check    # fmt-check, clippy -D warnings, nextest, doctests, rustdoc, cargo-deny
-mise run test     # nextest + doctests
-mise run spec     # regenerate spec/ after changing api, policy, or the vector grid
-mise run hooks    # point core.hooksPath at the tracked hooks in .githooks
-```
-
-The hooks are tracked, not generated: `mise run hooks` sets this repository's
-`core.hooksPath` to `.githooks` and verifies it took effect. `AGENTS.md` says what each stage
-runs.
-
-Library code is held to a strict lint set: pedantic clippy, with `unwrap`, `expect`, `panic`,
-`dbg` and `todo` denied. Tests are few and high-grade: property tests for the policy laws, a
-local mock server for the wire and retry contract, structural tracing assertions, a
-compile-fail suite for the derives, and a drift guard that re-resolves every golden vector.
-
-Two opt-in tests hit the real API and are skipped by default:
-
-```sh
-TYPESAFE_API_KEY=… cargo nextest run -p guideme --test live --run-ignored ignored-only --no-capture
-```
-
-Contributor rules live in `AGENTS.md`. Report a vulnerability privately, as `SECURITY.md`
-describes, never in a public issue.
+Tools come from [mise](https://mise.jdx.dev). Run `mise install`, then `mise run hooks` once.
+`mise run check` runs the full gate. [`CONTRIBUTING.md`](CONTRIBUTING.md) is the short guide.
+[`AGENTS.md`](AGENTS.md) has the full contributor rules, the commands and the live tests. Report a vulnerability privately, as [`SECURITY.md`](SECURITY.md)
+describes.
 
 ## License
 
-MIT or Apache-2.0, at your option.
+MIT or Apache-2.0, as you choose.
