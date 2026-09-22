@@ -27,7 +27,7 @@ The live TypeSafe docs are the source of truth for the wire contract, over two p
 | `guideme/src/api/client.rs` | HTTP, retries, status → `Error`, one HTTP client span per attempt and the `guideme.retry` event | the only file that may use `reqwest`'s API; `api/mod.rs` only re-exports the crate. Span fields follow the OpenTelemetry HTTP client conventions |
 | `guideme/src/policy.rs` | `resolve(&Answer, Thresholds) -> Outcome`, `Policy`, `Thresholds` | pure: no I/O, no generics, no Rust enums; its behaviour is the shared contract |
 | `guideme/src/question.rs` | question kinds, constructors, `Options`/`Levels` traits, the unsure ladder | every kind stays sealed |
-| `guideme/src/rubric.rs` | `Rubric`, the runtime half of the rubric renderer, and the rules that need more than one rubric in view | renders identically to `guideme-derive`; a test pins the two. Every rule the derives enforce at expansion time is enforced here when the question is asked, so a declaration is legal under both or under neither |
+| `guideme/src/rubric.rs` | `Rubric`, the runtime half of the rubric renderer, and the rules that need more than one rubric in view | renders identically to `guideme-derive`; a test pins the two. Every **rubric** rule the derives enforce at expansion time is enforced here when the question is asked, so a rubric is legal under both or under neither. Rules about the declaration itself — at least two variants, unit variants only, one fallback — are the derives' alone; there is no runtime declaration to apply them to |
 | `guideme/src/ask.rs` | the `Ask` shape trait (question, tuple, `Vec`, `BTreeMap`) | sealed; ids are `q0..qN` in encounter order |
 | `guideme/src/guide.rs` | `Guide::ask`, spans and events | one `guideme.ask` span per request, one `guideme.answer` event per question; span fields follow the OpenTelemetry GenAI conventions, anything else is namespaced `guideme.` |
 | `guideme/src/spec.rs`, `src/bin/spec.rs` | schemas and golden vectors under `spec/` | regenerate with `mise run spec`; the drift test fails otherwise |
@@ -169,9 +169,11 @@ So is changing *which* rubric declarations are legal. The rules are one set, enf
 the derives reject at expansion time, `rubric.rs` rejects with `Error::Config` when the
 question is asked. That includes the two that need more than one rubric in view — an example
 shared by two options or two levels, and a counterexample on a level — which every runtime
-constructor can now apply because it holds the whole set at once. Adding or relaxing a rule
-means both places, `docs/contract.md`, and an issue in every other SDK: a declaration must be
-legal in all of them or in none.
+constructor can now apply because it holds the whole set at once. Adding or relaxing one of
+them means both places, `docs/contract.md`, and an issue in every other SDK: a rubric must be
+legal in all of them or in none. The derives' other rules — at least two variants, unit
+variants only, one fallback — are about the declaration rather than the rubric, have no
+runtime counterpart to drift from, and are not contract.
 
 Renaming, adding or removing a span or event field is also a contract change: it goes through
 `docs/observability.md`, `docs/contract.md` and `CHANGELOG.md`, and is announced the same way.
