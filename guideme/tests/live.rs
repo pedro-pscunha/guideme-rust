@@ -205,37 +205,35 @@ async fn the_guide_surface_works_end_to_end_against_the_live_api()
     Ok(())
 }
 
-/// The confusable pair from the design note, without examples: on an ambiguous question a
-/// plain rubric leans on `return_policy`.
+/// The confusable pair from the design note, without examples. On the ambiguous question
+/// below a plain rubric picks `return_policy`, which is the wrong answer.
 #[derive(guideme::Choice, Clone, Copy, PartialEq, Eq, Debug)]
 enum BareTopic {
-    /// Our rules for sending an item back: the return window, the condition it must be in, who pays return shipping, and how a refund is issued
+    /// Whether and how an item can be returned
     ReturnPolicy,
-    /// A return this customer has already started: where the parcel is and whether the money has been paid back yet
+    /// Progress of a return already sent
     ReturnStatus,
-    /// The item itself: sizing, materials, availability
-    Product,
 }
 
-/// The same three rubrics, with the examples that tell the two return options apart.
+/// The same two rubrics, with the examples that tell them apart. Each option's example is the
+/// other's counterexample, which is the confusable-options pattern the feature exists for and
+/// the one overlap the derive keeps legal.
 #[derive(guideme::Choice, Clone, Copy, PartialEq, Eq, Debug)]
 enum GuidedTopic {
-    /// Our rules for sending an item back: the return window, the condition it must be in, who pays return shipping, and how a refund is issued
+    /// Whether and how an item can be returned
     #[guide(
-        example = "How many days do I have to send something back?",
-        example = "Do I have to pay for return shipping?"
+        example = "Can I return shoes I've worn once?",
+        example = "How long do I have to return an order?"
     )]
-    #[guide(counterexample = "I posted the shoes back last week, where is my money?")]
+    #[guide(counterexample = "Has my return arrived yet?")]
     ReturnPolicy,
-    /// A return this customer has already started: where the parcel is and whether the money has been paid back yet
+    /// Progress of a return already sent
     #[guide(
-        example = "I posted the shoes back last week, where is my money?",
-        example = "My refund still has not arrived"
+        example = "Has my return arrived yet?",
+        example = "When will my refund be paid?"
     )]
+    #[guide(counterexample = "Can I return shoes I've worn once?")]
     ReturnStatus,
-    /// The item itself: sizing, materials, availability
-    #[guide(example = "Do these run small?")]
-    Product,
 }
 
 #[tokio::test]
@@ -249,7 +247,7 @@ async fn examples_move_the_answer_towards_what_they_describe()
         return Ok(());
     }
     let guide = Guide::from_env()?;
-    let question = "What is this message about?";
+    let question = "Which returns topic is the customer asking about?";
     let ambiguous = "About those shoes - what is the situation with the money side of things?";
 
     let bare = guide
@@ -261,8 +259,9 @@ async fn examples_move_the_answer_towards_what_they_describe()
     eprintln!("bare   = {bare:?}");
     eprintln!("guided = {guided:?}");
 
-    // The invariant the feature exists for, not a hardcoded score: naming the inputs that
-    // belong to `return_status` moves probability onto it.
+    // The invariant the feature exists for, not a hardcoded score: a plain rubric reads this
+    // as a question about the returns policy, and naming the inputs that belong to each option
+    // moves the answer onto the return already in progress.
     let bare_p = bare
         .probabilities
         .iter()
@@ -276,6 +275,7 @@ async fn examples_move_the_answer_towards_what_they_describe()
         .map(|(_, p)| p.get())
         .unwrap();
     eprintln!("return_status: bare {bare_p} -> guided {guided_p}");
+    assert_eq!(guided.choice, GuidedTopic::ReturnStatus);
     assert!(guided_p > bare_p);
 
     // A noul's criteria are as confusable as a choice's options, and this is where examples
