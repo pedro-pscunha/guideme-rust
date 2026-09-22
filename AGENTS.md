@@ -24,7 +24,7 @@ The live TypeSafe docs are the source of truth for the wire contract, over two p
 | Path | Owns | Rule |
 |---|---|---|
 | `guideme/src/api/mod.rs` | exact wire mirror of `POST /v1/systemone` and `GET /v1/models` | mirrors the docs field for field; no policy here |
-| `guideme/src/api/client.rs` | HTTP, retries, status → `Error`, one HTTP client span per attempt and the `guideme.retry` event | the only file that may name `reqwest`; span fields follow the OpenTelemetry HTTP client conventions |
+| `guideme/src/api/client.rs` | HTTP, retries, status → `Error`, one HTTP client span per attempt and the `guideme.retry` event | the only file that may use `reqwest`'s API; `api/mod.rs` only re-exports the crate. Span fields follow the OpenTelemetry HTTP client conventions |
 | `guideme/src/policy.rs` | `resolve(&Answer, Thresholds) -> Outcome`, `Policy`, `Thresholds` | pure: no I/O, no generics, no Rust enums; its behaviour is the shared contract |
 | `guideme/src/question.rs` | question kinds, constructors, `Options`/`Levels` traits, the unsure ladder | every kind stays sealed |
 | `guideme/src/rubric.rs` | `Rubric`, the runtime half of the rubric renderer, and the rules that need more than one rubric in view | renders identically to `guideme-derive`; a test pins the two. Every rule the derives enforce at expansion time is enforced here when the question is asked, so a declaration is legal under both or under neither |
@@ -182,6 +182,12 @@ Renaming, adding or removing a span or event field is also a contract change: it
 Both crates are on crates.io and share the workspace `version`. `guideme` depends on
 `guideme-derive` by version, so the two are always published together, derive first. Cargo
 orders them itself.
+
+`reqwest` is on the public surface: `api::ClientBuilder::http` takes a `reqwest::Client` and
+`api::reqwest` re-exports the crate, so **a `reqwest` major bump is a breaking change for
+guideme** and needs a major bump of its own. That is the price of transport injection being
+usable without the caller pinning `reqwest` themselves; `docs/design.md` records the trade.
+No other dependency is on the surface, and none should join it without the same note here.
 
 **A published version is permanent.** It can be yanked, which stops new dependents resolving
 to it and leaves existing lock files alone, but it can never be deleted or replaced. Get the

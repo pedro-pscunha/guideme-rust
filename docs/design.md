@@ -93,6 +93,16 @@ Each module survives the test.
   newline needs no punctuation heuristic and measured equivalent in quality, for two extra
   tokens. `what` is used verbatim, which is what makes a rubric with no examples render to
   itself byte for byte.
+- **Transport injection puts `reqwest` on the public surface, deliberately.**
+  `api::ClientBuilder::http` takes a `reqwest::Client`, which is the only way to hand in a
+  proxy, a client certificate or a shared pool without guideme growing a setter per feature
+  `reqwest` already has. A caller cannot supply that type from their own dependency unless it
+  resolves to the same major, so `api::reqwest` re-exports the one guideme links: two majors
+  in a tree are two unrelated `Client` types and the call simply would not compile, with an
+  error that names neither cause. The price is that a `reqwest` major bump becomes a guideme
+  breaking change, which is recorded under Releasing in `AGENTS.md`. A `dyn` transport trait
+  of our own would avoid it and cost more than it saves: `reqwest`'s builder is the interface
+  callers already know, and wrapping it would hide the features they came for.
 - **Telemetry speaks OpenTelemetry.** The ask span uses the GenAI conventions, each HTTP attempt is its own client span with the HTTP conventions, and a failure is `error.type` plus an error status on the span rather than an `ERROR` event. Anything without a convention is namespaced `guideme.`. The crate depends on `tracing` only; `docs/observability.md` shows the exporter side.
 
 ## Sharp edges

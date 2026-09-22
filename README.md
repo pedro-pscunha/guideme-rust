@@ -339,10 +339,24 @@ Question ids are `q0..qN` in encounter order, so a batch answers `q0`, `q1` and 
 order you wrote it. `server.received_requests()` is how you assert on what was sent.
 
 For a proxy, a client certificate, or a transport shared with the rest of the application,
-hand in the client instead: `api::Client::builder(key).http(reqwest_client).build()?`, then
-`Guide::builder().client(client)`. Everything the client carries — the key, the base URL, the
-retry budget, the backoff, the timeout — is refused by name if you also set it on the guide
-builder, so a setting never quietly does nothing.
+hand in the client instead:
+
+```rust
+use guideme::api::{reqwest, Client};
+
+let http = reqwest::Client::builder().timeout(Duration::from_secs(10)).build()?;
+let client = Client::builder("key".into()).base_url("https://api.typesafe.ai").http(http).build()?;
+let guide = Guide::builder().client(client).build()?;
+```
+
+`guideme::api::reqwest` is the `reqwest` guideme links, re-exported so you do not add a
+dependency of your own and do not have to keep a version in step: two `reqwest` majors in one
+tree are two unrelated `Client` types and the call would not compile. The flip side is that a
+`reqwest` major bump is a breaking change for guideme.
+
+Everything the client carries — the key, the base URL, the retry budget, the backoff, the
+timeout — is refused by name if you also set it on the guide builder, so a setting never
+quietly does nothing.
 
 ## Lower layers
 
