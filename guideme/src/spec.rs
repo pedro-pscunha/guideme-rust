@@ -8,7 +8,7 @@ use serde::Serialize;
 
 use crate::api::{Answer, Request, Response};
 use crate::policy::{Outcome, Thresholds, resolve};
-use crate::{Confidence, Error, Levels, Options, Probability};
+use crate::{Confidence, Error, Levels, Options, Probability, Rubric};
 
 /// How many vectors [`render`] produces. Guarded so the contract cannot silently shrink.
 pub const EXPECTED_VECTORS: usize = 42;
@@ -263,6 +263,17 @@ const COUNTER_PARTS: [(&str, &[&str], &[&str]); 3] = [
     ),
 ];
 
+/// The noul half. A noul has no enum to derive from, so these come straight from a
+/// [`Rubric`], which makes them the vector's only coverage of the runtime renderer.
+const NOUL_PARTS: [(&str, &[&str], &[&str]); 2] = [
+    (
+        "Something is broken now and nobody can work around it",
+        &["the checkout page is down"],
+        &["a nightly job failed and the numbers are pulled by hand for now"],
+    ),
+    ("It can wait for the next working day", &[], &[]),
+];
+
 /// `(what, examples)` per [`SpecLevel`] variant, low to high.
 const LEVEL_PARTS: [(&str, &[&str]); 2] = [
     (
@@ -272,14 +283,15 @@ const LEVEL_PARTS: [(&str, &[&str]); 2] = [
     ("No workaround exists", &[]),
 ];
 
-/// One rubric case: what the caller wrote, and what the derive rendered from it.
+/// One rubric case: what the caller wrote, and what was rendered from it. `kind` is
+/// `"choice"`, `"levels"` or `"noul"` — which question kind the rubric sits in.
 #[derive(Serialize)]
 struct RubricCase {
     kind: &'static str,
     what: &'static str,
     examples: &'static [&'static str],
     counterexamples: &'static [&'static str],
-    rendered: &'static str,
+    rendered: String,
 }
 
 /// Build the rubric vector by reading `RUBRIC` and `LEVELS` off real derived enums, so the
@@ -296,7 +308,29 @@ fn rubric_cases() -> Result<Vec<RubricCase>, Error> {
     for (rendered, (what, examples)) in SpecLevel::LEVELS.iter().zip(LEVEL_PARTS) {
         out.push(rubric_case("levels", what, examples, &[], rendered)?);
     }
+    for (what, examples, counterexamples) in NOUL_PARTS {
+        let rendered = rubric(what, examples, counterexamples).into_wire()?;
+        out.push(RubricCase {
+            kind: "noul",
+            what,
+            examples,
+            counterexamples,
+            rendered,
+        });
+    }
     Ok(out)
+}
+
+/// Build the runtime rubric a case describes.
+fn rubric(what: &str, examples: &[&str], counterexamples: &[&str]) -> Rubric {
+    let mut rubric = Rubric::new(what);
+    for example in examples {
+        rubric = rubric.example(*example);
+    }
+    for counterexample in counterexamples {
+        rubric = rubric.counterexample(*counterexample);
+    }
+    rubric
 }
 
 /// Append one derived choice enum's cases, pairing each variant with the parts it was written
@@ -332,7 +366,9 @@ fn push_choice(
     Ok(())
 }
 
-/// Pair one case with its rendering, rejecting a grid that has drifted from its enum.
+/// Pair one case with what the derive rendered, rejecting a grid that has drifted from its
+/// enum — and, because the runtime renderer is a second copy of the algorithm, refusing to
+/// publish a vector the two do not agree on.
 fn rubric_case(
     kind: &'static str,
     what: &'static str,
@@ -340,14 +376,12 @@ fn rubric_case(
     counterexamples: &'static [&'static str],
     rendered: &'static str,
 ) -> Result<RubricCase, Error> {
-    if !rendered.starts_with(what)
-        || !examples
-            .iter()
-            .chain(counterexamples)
-            .all(|part| rendered.contains(part))
-    {
+    let from_rubric = rubric(what, examples, counterexamples).into_wire()?;
+    if from_rubric != rendered {
         return Err(Error::Config {
-            detail: format!("rubric case {what:?} is not what the derive rendered"),
+            detail: format!(
+                "rubric case {what:?}: the derive rendered {rendered:?}, Rubric rendered {from_rubric:?}"
+            ),
         });
     }
     Ok(RubricCase {
@@ -355,6 +389,6 @@ fn rubric_case(
         what,
         examples,
         counterexamples,
-        rendered,
+        rendered: from_rubric,
     })
 }

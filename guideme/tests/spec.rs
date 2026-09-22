@@ -47,7 +47,7 @@ fn committed_spec_matches_render() -> Result<(), Box<dyn std::error::Error>> {
         }
         if rel.ends_with("rubric.json") {
             let cases: Vec<serde_json::Value> = serde_json::from_str(&contents)?;
-            assert_eq!(cases.len(), 8, "{rel}: the rubric contract may not shrink");
+            assert_eq!(cases.len(), 10, "{rel}: the rubric contract may not shrink");
             for case in &cases {
                 // A case with no parts renders to its rubric itself: what keeps every
                 // rubric written before 0.1.1 on the wire unchanged.

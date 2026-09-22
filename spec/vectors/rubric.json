@@ -74,5 +74,23 @@
     "examples": [],
     "counterexamples": [],
     "rendered": "No workaround exists"
+  },
+  {
+    "kind": "noul",
+    "what": "Something is broken now and nobody can work around it",
+    "examples": [
+      "the checkout page is down"
+    ],
+    "counterexamples": [
+      "a nightly job failed and the numbers are pulled by hand for now"
+    ],
+    "rendered": "Something is broken now and nobody can work around it\nExamples: the checkout page is down\nNot this option: a nightly job failed and the numbers are pulled by hand for now"
+  },
+  {
+    "kind": "noul",
+    "what": "It can wait for the next working day",
+    "examples": [],
+    "counterexamples": [],
+    "rendered": "It can wait for the next working day"
   }
 ]
