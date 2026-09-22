@@ -65,7 +65,7 @@ it a chat would make products that key on that value read it as one.
 | `url.template` | str | `/v1/systemone` or `/v1/models`, the low-cardinality form of the path |
 | `http.request.resend_count` | i64 | ordinal of the retry, absent on the first attempt |
 | `http.response.status_code` | i64 | absent when no response arrived |
-| `error.type` | str | the status code as text when a response arrived, else [`Error::kind`] |
+| `error.type` | str | the status code as text on a non-200, otherwise [`Error::kind`] |
 | `otel.status_code` | str | `ERROR` on any non-200 status or transport failure |
 
 A `429` that was retried and then succeeded is one failed attempt span next to one
@@ -125,7 +125,8 @@ on, and it keeps the caller in charge of whether and where the failure is logged
 
 `error.type` values on the ask span: `auth`, `invalid`, `rate_limited`, `overloaded`,
 `transport`, `unexpected_status`, `protocol`, `unsure`, `config`. On an HTTP span it is the
-status code as text when a response arrived, otherwise one of those names.
+status code as text on a non-200, otherwise one of those names — a `200` whose body failed to
+read or decode is marked with `transport` or `protocol`, not with `200`.
 
 The status description is the error's message, except for `invalid` and
 `unexpected_status`: those errors carry the verbatim response body, which could echo the
