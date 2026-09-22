@@ -1,0 +1,5 @@
+error: guideme: "Where is my refund?" is an example of both `Billing` and `Technical`; an input belongs to one option
+ --> tests/ui/example_of_two_options.rs:8:5
+  |
+8 |     Technical,
+  |     ^^^^^^^^^

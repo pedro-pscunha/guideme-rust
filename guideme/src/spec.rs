@@ -185,7 +185,8 @@ fn vectors() -> Result<Vec<Vector>, Error> {
 }
 
 /// The choice half of the rubric vector: one variant per case, in the order of the golden
-/// table in `docs/contract.md`.
+/// table in `docs/contract.md`. Split across two enums because the golden rows deliberately
+/// reuse a string that no single declaration may use twice.
 #[derive(Clone, PartialEq, Eq, crate::Choice)]
 enum SpecChoice {
     /// Payments, invoicing, refunds
@@ -196,6 +197,12 @@ enum SpecChoice {
     /// Payments, invoicing, refunds
     #[guide(example = "My card was charged twice", example = "Where is my refund?")]
     TwoExamples,
+}
+
+/// The rows that carry a counterexample, plus the case that pins declaration order: neither
+/// clause is in sorted order, so a renderer that sorted would not reproduce it.
+#[derive(Clone, PartialEq, Eq, crate::Choice)]
+enum SpecChoiceCounter {
     /// Payments, invoicing, refunds
     #[guide(example = "My card was charged twice")]
     #[guide(counterexample = "The dashboard is down")]
@@ -203,6 +210,13 @@ enum SpecChoice {
     /// Payments, invoicing, refunds
     #[guide(counterexample = "The dashboard is down")]
     OnlyCounterexample,
+    /// Payments, invoicing, refunds
+    #[guide(example = "Why was I billed twice?", example = "Cancel and refund me")]
+    #[guide(
+        counterexample = "The status page is red",
+        counterexample = "Are you hiring?"
+    )]
+    DeclarationOrder,
 }
 
 /// The score half. A level never carries a counterexample.
@@ -216,7 +230,7 @@ enum SpecLevel {
 }
 
 /// `(what, examples, counterexamples)` per [`SpecChoice`] variant, in declaration order.
-const CHOICE_PARTS: [(&str, &[&str], &[&str]); 5] = [
+const CHOICE_PARTS: [(&str, &[&str], &[&str]); 3] = [
     ("Payments, invoicing, refunds", &[], &[]),
     (
         "Bugs, outages, integrations",
@@ -228,6 +242,10 @@ const CHOICE_PARTS: [(&str, &[&str], &[&str]); 5] = [
         &["My card was charged twice", "Where is my refund?"],
         &[],
     ),
+];
+
+/// The same, per [`SpecChoiceCounter`] variant.
+const COUNTER_PARTS: [(&str, &[&str], &[&str]); 3] = [
     (
         "Payments, invoicing, refunds",
         &["My card was charged twice"],
@@ -237,6 +255,11 @@ const CHOICE_PARTS: [(&str, &[&str], &[&str]); 5] = [
         "Payments, invoicing, refunds",
         &[],
         &["The dashboard is down"],
+    ),
+    (
+        "Payments, invoicing, refunds",
+        &["Why was I billed twice?", "Cancel and refund me"],
+        &["The status page is red", "Are you hiring?"],
     ),
 ];
 
@@ -262,16 +285,38 @@ struct RubricCase {
 /// Build the rubric vector by reading `RUBRIC` and `LEVELS` off real derived enums, so the
 /// published cases are what the macro emits rather than a second copy of the algorithm.
 fn rubric_cases() -> Result<Vec<RubricCase>, Error> {
-    if SpecChoice::RUBRIC.len() != CHOICE_PARTS.len()
-        || SpecLevel::LEVELS.len() != LEVEL_PARTS.len()
-    {
+    let mut out = Vec::with_capacity(CHOICE_PARTS.len() + COUNTER_PARTS.len() + LEVEL_PARTS.len());
+    push_choice(&mut out, SpecChoice::RUBRIC, &CHOICE_PARTS)?;
+    push_choice(&mut out, SpecChoiceCounter::RUBRIC, &COUNTER_PARTS)?;
+    if SpecLevel::LEVELS.len() != LEVEL_PARTS.len() {
         return Err(Error::Config {
-            detail: "the rubric grid and its enums disagree on length".into(),
+            detail: "the level grid and its enum disagree on length".into(),
         });
     }
-    let mut out = Vec::with_capacity(CHOICE_PARTS.len() + LEVEL_PARTS.len());
+    for (rendered, (what, examples)) in SpecLevel::LEVELS.iter().zip(LEVEL_PARTS) {
+        out.push(rubric_case("levels", what, examples, &[], rendered)?);
+    }
+    Ok(out)
+}
+
+/// Append one derived choice enum's cases, pairing each variant with the parts it was written
+/// from.
+fn push_choice(
+    out: &mut Vec<RubricCase>,
+    rubric: &'static [(&'static str, Option<&'static str>)],
+    parts: &'static [(
+        &'static str,
+        &'static [&'static str],
+        &'static [&'static str],
+    )],
+) -> Result<(), Error> {
+    if rubric.len() != parts.len() {
+        return Err(Error::Config {
+            detail: "the rubric grid and its enum disagree on length".into(),
+        });
+    }
     for ((_, rendered), (what, examples, counterexamples)) in
-        SpecChoice::RUBRIC.iter().zip(CHOICE_PARTS)
+        rubric.iter().zip(parts.iter().copied())
     {
         let rendered = rendered.ok_or_else(|| Error::Config {
             detail: format!("rubric case {what:?} lost its rubric"),
@@ -284,10 +329,7 @@ fn rubric_cases() -> Result<Vec<RubricCase>, Error> {
             rendered,
         )?);
     }
-    for (rendered, (what, examples)) in SpecLevel::LEVELS.iter().zip(LEVEL_PARTS) {
-        out.push(rubric_case("levels", what, examples, &[], rendered)?);
-    }
-    Ok(out)
+    Ok(())
 }
 
 /// Pair one case with its rendering, rejecting a grid that has drifted from its enum.

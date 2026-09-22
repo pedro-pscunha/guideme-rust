@@ -46,6 +46,19 @@
     "rendered": "Payments, invoicing, refunds\nNot this option: The dashboard is down"
   },
   {
+    "kind": "choice",
+    "what": "Payments, invoicing, refunds",
+    "examples": [
+      "Why was I billed twice?",
+      "Cancel and refund me"
+    ],
+    "counterexamples": [
+      "The status page is red",
+      "Are you hiring?"
+    ],
+    "rendered": "Payments, invoicing, refunds\nExamples: Why was I billed twice?; Cancel and refund me\nNot this option: The status page is red; Are you hiring?"
+  },
+  {
     "kind": "levels",
     "what": "No impact to functionality",
     "examples": [

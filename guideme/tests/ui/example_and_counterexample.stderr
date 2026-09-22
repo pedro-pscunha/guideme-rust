@@ -1,0 +1,5 @@
+error: guideme: "Where is my refund?" is both an example and a counterexample of `Billing`; it cannot be in and out of the same option
+ --> tests/ui/example_and_counterexample.rs:6:5
+  |
+6 |     Billing,
+  |     ^^^^^^^

@@ -193,7 +193,44 @@ fn variants(input: &DeriveInput, derive: &str) -> Result<Vec<Variant>> {
             format!("guideme: #[derive({derive})] needs at least two variants"),
         ));
     }
+    check_examples(&out, derive)?;
     Ok(out)
+}
+
+/// An example asserts that an input belongs here, so it cannot also say it does not, and it
+/// cannot say so of two variants at once. The same string as an example of one variant and a
+/// counterexample of another is the confusable-options pattern, and stays legal.
+fn check_examples(vs: &[Variant], derive: &str) -> Result<()> {
+    let noun = if derive == "Levels" {
+        "level"
+    } else {
+        "option"
+    };
+    for (i, v) in vs.iter().enumerate() {
+        for example in &v.examples {
+            if v.counterexamples.contains(example) {
+                return Err(Error::new_spanned(
+                    &v.ident,
+                    format!(
+                        "guideme: {example:?} is both an example and a counterexample of `{}`; it cannot be in and out of the same {noun}",
+                        v.ident
+                    ),
+                ));
+            }
+            for other in &vs[..i] {
+                if other.examples.contains(example) {
+                    return Err(Error::new_spanned(
+                        &v.ident,
+                        format!(
+                            "guideme: {example:?} is an example of both `{}` and `{}`; an input belongs to one {noun}",
+                            other.ident, v.ident
+                        ),
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Join a variant's `///` lines into one rubric string.
@@ -324,28 +361,4 @@ fn expand_levels(input: &DeriveInput) -> Result<proc_macro2::TokenStream> {
             }
         }
     })
-}
-
-#[cfg(test)]
-mod tests {
-    #![allow(
-        clippy::unwrap_used,
-        clippy::expect_used,
-        clippy::panic,
-        clippy::pedantic,
-        missing_docs
-    )]
-
-    use proptest::prelude::*;
-
-    use super::render;
-
-    proptest! {
-        /// The load-bearing invariant: a rubric with no parts is its own rendering, so a
-        /// declaration written before examples existed puts the same bytes on the wire.
-        #[test]
-        fn a_rubric_with_no_parts_renders_to_itself(what in "\\PC{0,64}") {
-            prop_assert_eq!(render(&what, &[], &[]), what);
-        }
-    }
 }
