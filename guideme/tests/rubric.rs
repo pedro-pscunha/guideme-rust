@@ -156,7 +156,7 @@ fn runtime(what: &str, examples: &[&str], counterexamples: &[&str]) -> String {
     for counterexample in counterexamples {
         rubric = rubric.counterexample(*counterexample);
     }
-    rubric.to_string()
+    rubric.render().expect("every golden row is a valid rubric")
 }
 
 /// The §9.5 pin. Two copies of the algorithm exist because `Options::RUBRIC` is a `const` and
@@ -193,7 +193,7 @@ proptest! {
     /// declaration written before examples existed puts the same bytes on the wire.
     #[test]
     fn a_rubric_with_no_parts_renders_to_itself(what in "(?s).{0,64}") {
-        prop_assert_eq!(Rubric::new(&*what).to_string(), what);
+        prop_assert_eq!(Rubric::new(&*what).render()?, what);
     }
 }
 

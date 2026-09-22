@@ -6,7 +6,7 @@ use std::marker::PhantomData;
 
 use crate::api::{self, MAX_LEVELS, MAX_OPTIONS, NoulCriteria};
 use crate::policy::{Outcome, Thresholds, Verdict};
-use crate::rubric::{IntoRubric, Rubric};
+use crate::rubric::{self, IntoRubric, Rubric};
 use crate::{Confidence, Error, Instructions, Policy, Probability};
 
 pub(crate) mod sealed {
@@ -178,11 +178,11 @@ fn unsure<T>(id: &str, value: f64, threshold: f64, or: Option<T>) -> Result<T, E
 impl Kind for Noul {
     type Out = bool;
     fn wire(&self, instructions: Instructions) -> Result<api::Question, Error> {
-        let criteria = match self.criteria.clone() {
-            Some((yes, no)) => Some(NoulCriteria {
-                yes: yes.into_wire()?,
-                no: no.into_wire()?,
-            }),
+        let criteria = match &self.criteria {
+            Some((yes, no)) => {
+                let (yes, no) = rubric::render_pair(yes, no)?;
+                Some(NoulCriteria { yes, no })
+            }
             None => None,
         };
         Ok(api::Question::Noul {

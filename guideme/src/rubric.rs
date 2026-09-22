@@ -1,7 +1,5 @@
 //! A rubric as a value: what something means, plus the inputs that belong to it.
 
-use std::fmt;
-
 use crate::Error;
 
 /// A description with examples, for the rubric positions that are not an enum.
@@ -12,9 +10,8 @@ use crate::Error;
 /// a description or a `Rubric`, through [`IntoRubric`].
 ///
 /// Examples and counterexamples render in the order they were added. A `Rubric` with neither
-/// renders to `what` itself, byte for byte. [`Display`](fmt::Display) renders without checking
-/// anything, for the rubric positions that take an already-rendered string; the checks below
-/// run when a question carrying one is asked.
+/// renders to `what` itself, byte for byte. [`render`](Rubric::render) is the only way to get
+/// that string, and it checks before it renders, so there is no unchecked path to the wire.
 ///
 /// ```
 /// use guideme::{noul, Rubric};
@@ -28,10 +25,14 @@ use crate::Error;
 /// # let _ = question;
 /// ```
 ///
-/// The rules a single rubric can see are enforced here, with the same wording the derives use:
+/// [`render`](Rubric::render) enforces every rule one rubric can see, in the derives' wording:
 /// an empty example or counterexample, a duplicate within either clause, the same string as
-/// both an example and a counterexample, and examples attached to a blank description. The
-/// contradiction checks that need every option at once stay in `guideme-derive`.
+/// both an example and a counterexample, and examples attached to a blank rubric. Two rules it
+/// cannot see, because they need something outside the rubric: an example shared by two
+/// options, which is checked for a noul's pair when the question is asked but not across the
+/// options of [`choose_among`](crate::choose_among), and a counterexample on a level, which
+/// only [`score_levels`](crate::score_levels) knows it is building. Both are compile errors
+/// under the derives.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Rubric {
     what: String,
@@ -61,17 +62,21 @@ impl Rubric {
         self
     }
 
-    /// Check, then render for the wire.
+    /// Check, then compose the parts into the one string the API takes.
     ///
-    /// A blank description on its own is left alone — it is what 0.1.0 accepted and says
-    /// nothing about this feature — so that one fires only where parts were attached to it.
-    /// `docs/contract.md` draws the same line for every SDK.
-    pub(crate) fn into_wire(self) -> Result<String, Error> {
+    /// `docs/contract.md` pins these bytes; `guideme-derive` renders the same way at expansion
+    /// time, and `guideme/tests/rubric.rs` asserts the two agree. A blank rubric on its own is
+    /// left alone — it is what 0.1.0 accepted and says nothing about this feature — so that one
+    /// fires only where parts were attached to it.
+    ///
+    /// # Errors
+    /// [`Error::Config`] for any rule this rubric breaks; the type's docs list them.
+    pub fn render(&self) -> Result<String, Error> {
         if self.what.trim().is_empty()
             && !(self.examples.is_empty() && self.counterexamples.is_empty())
         {
             return Err(Error::Config {
-                detail: "examples need a non-empty description to attach to".into(),
+                detail: "examples need a non-empty rubric to attach to".into(),
             });
         }
         check_clause(&self.examples, "example")?;
@@ -85,8 +90,33 @@ impl Rubric {
                 });
             }
         }
-        Ok(self.to_string())
+        let mut out = self.what.clone();
+        if !self.examples.is_empty() {
+            out.push_str("\nExamples: ");
+            out.push_str(&self.examples.join("; "));
+        }
+        if !self.counterexamples.is_empty() {
+            out.push_str("\nNot this option: ");
+            out.push_str(&self.counterexamples.join("; "));
+        }
+        Ok(out)
     }
+}
+
+/// Check a noul's pair, then render both. An example asserts that an input belongs to this
+/// side, so the same string on both sides asserts it belongs to each — the rule the derive
+/// applies across a `Choice`'s options, on the only runtime path that holds both in view.
+pub(crate) fn render_pair(yes: &Rubric, no: &Rubric) -> Result<(String, String), Error> {
+    for example in &yes.examples {
+        if no.examples.contains(example) {
+            return Err(Error::Config {
+                detail: format!(
+                    "{example:?} is an example of both yes and no; an input belongs to one option"
+                ),
+            });
+        }
+    }
+    Ok((yes.render()?, no.render()?))
 }
 
 /// Reject an empty entry or a repeat within one clause. Whitespace-only counts as empty, and
@@ -107,22 +137,6 @@ fn check_clause(items: &[String], kind: &str) -> Result<(), Error> {
     Ok(())
 }
 
-/// Compose the parts into the one string the API takes. `docs/contract.md` pins these bytes;
-/// `guideme-derive` renders the same way at expansion time, and `guideme/tests/rubric.rs`
-/// asserts the two agree.
-impl fmt::Display for Rubric {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.what)?;
-        if !self.examples.is_empty() {
-            write!(f, "\nExamples: {}", self.examples.join("; "))?;
-        }
-        if !self.counterexamples.is_empty() {
-            write!(f, "\nNot this option: {}", self.counterexamples.join("; "))?;
-        }
-        Ok(())
-    }
-}
-
 mod sealed {
     pub trait Sealed {}
 }
@@ -130,9 +144,13 @@ mod sealed {
 /// What a rubric position accepts: a description — anything `String` converts from, so every
 /// call written against `impl Into<String>` still compiles — or a [`Rubric`] carrying examples.
 ///
-/// Sealed. It exists so one position can take either, not as an extension point. `Rubric`
-/// itself is deliberately not `Into<String>`: that is what lets the blanket case and the
-/// `Rubric` case coexist. Use [`Display`](fmt::Display) to render one by hand.
+/// Sealed. It exists so one position can take either, not as an extension point.
+///
+/// `Rubric` is **permanently** not `Into<String>`, and cannot become so: the blanket case below
+/// covers every `T: Into<String>`, so an `impl From<Rubric> for String` would make the two impls
+/// overlap and neither would compile. Adding one is not a widening to weigh at 0.2.0, it is a
+/// change that cannot be made while `IntoRubric` accepts both. [`Rubric::render`] is how a
+/// `Rubric` becomes a string.
 pub trait IntoRubric: sealed::Sealed {
     /// Convert into a [`Rubric`].
     fn into_rubric(self) -> Rubric;
