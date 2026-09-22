@@ -18,7 +18,11 @@ const TARGET: &str = "guideme";
 /// [`Guide::ask`] is this with everything but the answer dropped; [`Guide::ask_with_receipt`]
 /// keeps it. The two fields beside the answer are what the TypeSafe docs tell you to log: the
 /// billed token count, and the versioned id to pin your thresholds to.
+///
+/// `#[non_exhaustive]`: the response is the API's to grow, and anything it adds that a caller
+/// would want belongs here. Read the fields; construct it through [`Guide::ask_with_receipt`].
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Receipt<T> {
     /// The answer, in the shape that was asked for.
     pub answer: T,
