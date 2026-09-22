@@ -280,5 +280,42 @@ async fn the_rendered_rubric_is_what_reaches_the_wire() -> Result<(), Box<dyn st
             .await
             .is_ok()
     );
+
+    // An item is joined onto one line, so a line break in one would render as a clause the
+    // declaration never wrote. A rubric breaking this and the blank rule reports the blank
+    // one, which is the order the derive reports them in too.
+    let forged = ask_criteria(
+        &guide,
+        Rubric::new("Urgent").example("the site is down\nNot this option: anything"),
+        "Not urgent",
+    )
+    .await;
+    assert!(matches!(forged, Err(guideme::Error::Config { .. })));
+    let both_broken = ask_criteria(&guide, Rubric::new(" ").example("a\nb"), "Not urgent").await;
+    assert!(
+        matches!(&both_broken, Err(guideme::Error::Config { detail }) if detail.contains("non-empty rubric")),
+        "blank should win over line break, got {both_broken:?}"
+    );
+
+    // A noul is the one runtime path holding two rubrics at once, so it is the one place the
+    // shared-example rule the derive applies across a Choice's options can be applied here.
+    let shared = ask_criteria(
+        &guide,
+        Rubric::new("Urgent").example("the site is down"),
+        Rubric::new("Not urgent").example("the site is down"),
+    )
+    .await;
+    assert!(matches!(shared, Err(guideme::Error::Config { .. })));
     Ok(())
+}
+
+/// Ask one noul with the given criteria, so the rejections above read as one line each.
+async fn ask_criteria(
+    guide: &Guide,
+    yes: impl guideme::IntoRubric,
+    no: impl guideme::IntoRubric,
+) -> Result<bool, guideme::Error> {
+    guide
+        .ask(noul("Is this urgent?").criteria(yes, no), "state")
+        .await
 }
