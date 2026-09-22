@@ -204,3 +204,78 @@ async fn the_guide_surface_works_end_to_end_against_the_live_api()
     assert!(models.iter().any(|m| m.name == "jev-latest"));
     Ok(())
 }
+
+/// The confusable pair from the design note, without examples: on an ambiguous question a
+/// plain rubric leans on `return_policy`.
+#[derive(guideme::Choice, Clone, Copy, PartialEq, Eq, Debug)]
+enum BareTopic {
+    /// Our rules for sending an item back: the return window, the condition it must be in, who pays return shipping, and how a refund is issued
+    ReturnPolicy,
+    /// A return this customer has already started: where the parcel is and whether the money has been paid back yet
+    ReturnStatus,
+    /// The item itself: sizing, materials, availability
+    Product,
+}
+
+/// The same three rubrics, with the examples that tell the two return options apart.
+#[derive(guideme::Choice, Clone, Copy, PartialEq, Eq, Debug)]
+enum GuidedTopic {
+    /// Our rules for sending an item back: the return window, the condition it must be in, who pays return shipping, and how a refund is issued
+    #[guide(
+        example = "How many days do I have to send something back?",
+        example = "Do I have to pay for return shipping?"
+    )]
+    #[guide(counterexample = "I posted the shoes back last week, where is my money?")]
+    ReturnPolicy,
+    /// A return this customer has already started: where the parcel is and whether the money has been paid back yet
+    #[guide(
+        example = "I posted the shoes back last week, where is my money?",
+        example = "My refund still has not arrived"
+    )]
+    ReturnStatus,
+    /// The item itself: sizing, materials, availability
+    #[guide(example = "Do these run small?")]
+    Product,
+}
+
+#[tokio::test]
+#[ignore = "hits the live TypeSafe API; needs TYPESAFE_API_KEY"]
+async fn examples_move_the_distribution_towards_the_option_they_belong_to()
+-> Result<(), Box<dyn std::error::Error>> {
+    use guideme::{Guide, choose};
+
+    if std::env::var("TYPESAFE_API_KEY").is_err() {
+        eprintln!("TYPESAFE_API_KEY not set; skipping");
+        return Ok(());
+    }
+    let guide = Guide::from_env()?;
+    let question = "What is this message about?";
+    let ambiguous = "About those shoes - what is the situation with the money side of things?";
+
+    let bare = guide
+        .ask(choose::<BareTopic>(question).detail(), ambiguous)
+        .await?;
+    let guided = guide
+        .ask(choose::<GuidedTopic>(question).detail(), ambiguous)
+        .await?;
+    eprintln!("bare   = {bare:?}");
+    eprintln!("guided = {guided:?}");
+
+    // The invariant the feature exists for, not a hardcoded score: naming the inputs that
+    // belong to `return_status` moves probability onto it.
+    let bare_p = bare
+        .probabilities
+        .iter()
+        .find(|(topic, _)| *topic == BareTopic::ReturnStatus)
+        .map(|(_, p)| p.get())
+        .unwrap();
+    let guided_p = guided
+        .probabilities
+        .iter()
+        .find(|(topic, _)| *topic == GuidedTopic::ReturnStatus)
+        .map(|(_, p)| p.get())
+        .unwrap();
+    eprintln!("return_status: bare {bare_p} -> guided {guided_p}");
+    assert!(guided_p > bare_p);
+    Ok(())
+}
