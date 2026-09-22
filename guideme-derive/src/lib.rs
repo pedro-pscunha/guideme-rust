@@ -153,18 +153,12 @@ fn variants(input: &DeriveInput, derive: &str) -> Result<Vec<Variant>> {
                 Ok(())
             })?;
         }
-        if let Some(what) = &rubric
-            && what.trim().is_empty()
+        // Examples describe a rubric, so there has to be one to describe. A variant carrying
+        // neither is left exactly as 0.1.0 read it, blank rubric included: rejecting that would
+        // be a new error for code that has nothing to do with this feature.
+        if !(examples.is_empty() && counterexamples.is_empty())
+            && rubric.as_deref().is_none_or(|what| what.trim().is_empty())
         {
-            return Err(Error::new_spanned(
-                v,
-                format!(
-                    "guideme: the rubric on `{}` is empty; a rubric is the text the model reads",
-                    v.ident
-                ),
-            ));
-        }
-        if rubric.is_none() && !(examples.is_empty() && counterexamples.is_empty()) {
             let option = if examples.is_empty() {
                 "counterexample"
             } else {
@@ -173,7 +167,7 @@ fn variants(input: &DeriveInput, derive: &str) -> Result<Vec<Variant>> {
             return Err(Error::new_spanned(
                 v,
                 format!(
-                    "guideme: #[guide({option})] on `{}` needs a rubric to attach to (a /// doc comment or #[guide(rubric = \"…\")])",
+                    "guideme: #[guide({option})] on `{}` needs a non-empty rubric to attach to (a /// doc comment or #[guide(rubric = \"…\")])",
                     v.ident
                 ),
             ));

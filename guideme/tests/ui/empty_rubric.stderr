@@ -1,6 +1,6 @@
-error: guideme: the rubric on `Billing` is empty; a rubric is the text the model reads
+error: guideme: #[guide(example)] on `Billing` needs a non-empty rubric to attach to (a /// doc comment or #[guide(rubric = "…")])
  --> tests/ui/empty_rubric.rs:3:5
   |
-3 | /     #[guide(rubric = "   ")]
+3 | /     #[guide(rubric = "   ", example = "My card was charged twice")]
 4 | |     Billing,
   | |___________^

@@ -1,6 +1,6 @@
 #[derive(guideme::Choice, Clone, Copy, PartialEq, Eq)]
 enum Bad {
-    #[guide(rubric = "   ")]
+    #[guide(rubric = "   ", example = "My card was charged twice")]
     Billing,
     /// technical
     Technical,
