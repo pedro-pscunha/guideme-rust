@@ -93,7 +93,17 @@ option. The same string as an example of one option and a counterexample of **an
 legitimate and must stay legal — it is exactly the confusable-options pattern this feature
 exists for.
 
-Two definitions, because they are the kind of thing two SDKs drift on silently:
+**Validation is over the declared items, not the rendered text.** That one rule explains the
+rest: `["a; b"]` renders exactly like `["a", "b"]` and still passes the duplicate and
+shared-example checks, `" a"` is not `"a"`, and `"A"` is not `"a"`. No SDK normalises, and none
+should start.
+
+What the rules guarantee is **rendering integrity, not input trust**: a string an SDK renders
+from declared parts carries exactly the clauses those parts declared. Rubric text itself is
+trusted and is not sanitised, and a rubric handed to a runtime constructor as an
+already-rendered string is passed through as written.
+
+Three definitions follow, because they are the kind of thing two SDKs drift on silently:
 
 - **Empty or whitespace-only** means the string is empty once characters with the Unicode
   `White_Space` property are removed from both ends. That is exactly Rust's `str::trim`.
@@ -104,9 +114,23 @@ Two definitions, because they are the kind of thing two SDKs drift on silently:
 - **Duplicate detection is exact string equality**, with no trimming, case folding or Unicode
   normalisation. `"a"` and `" a"` are two different examples and both are legal. Only the
   emptiness check trims, so the two rules deliberately disagree about what `" a"` is.
-- **Items are inserted verbatim.** No escaping is performed on an item containing `"; "` or a
-  newline, and the rendering is not required to be reversible: a reader cannot in general
-  recover the item list from the rendered string, and no SDK should try.
+- **An example or counterexample may not contain `U+000A` or `U+000D`.** Items are joined onto
+  one line with `"; "`, so a line break in one would render as a clause boundary the
+  declaration never wrote. The check is `contains` over exactly those two code points — never a
+  language's line-splitting primitive (`str::lines`, `str.splitlines`) and never a
+  control-character class, because those cover different sets and would leave two SDKs
+  disagreeing about `U+2028`, `U+0085` and the rest. Those are deliberately **not** refused:
+  they are `White_Space`, so they are already blank on their own, and embedded they are
+  harmless. A `what` may contain anything, line breaks included; only items are constrained.
+  Where a rubric breaks this rule and the blank-rubric rule at once, the blank one is reported.
+
+Items are inserted verbatim: nothing is escaped, and the rendering is not required to be
+reversible — a reader cannot in general recover the item list from the rendered string, and no
+SDK should try. An item containing `"; "`, or one whose text is literally
+`"Not this option: x"`, is documented rather than refused. Both change what a reader sees
+*inside* a clause, while a line break changes *which clause* they are in, and only the second
+can forge a `Not this option:` the declaration never wrote. That is the whole of the
+refused-versus-documented line; it is not two arbitrary decisions.
 
 An empty or whitespace-only rubric is rejected **only where examples were attached to it** —
 you described nothing. A rubric that carries neither keeps whatever an SDK did before this

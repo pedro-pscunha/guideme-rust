@@ -35,6 +35,10 @@
   place, so the same declaration is legal or illegal in both.
 - Examples and counterexamples render in declaration order, and the `Not this option` label is
   fixed. Both are contract, and `spec/vectors/rubric.json` covers them.
+- An example or counterexample may not contain `U+000A` or `U+000D`: items are joined onto one
+  line, so a line break in one would render as a clause the declaration never wrote. A rubric's
+  description may still contain anything. Items are new in this release, so nothing can already
+  depend on it — which is why the rule ships with the feature rather than after it.
 - `spec/vectors/rubric.json`: the rendering is a cross-SDK contract item, published as golden
   cases generated from real derived enums. `spec/schema/` and `spec/vectors/policy.json` are
   byte-identical to 0.1.0.
