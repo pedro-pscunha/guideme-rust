@@ -75,7 +75,7 @@ scores there — no numeric annotation is added to the text.
 Where the rendering happens is each language's business, and the SDKs differ on purpose. Rust
 renders inside `#[derive(Choice)]` / `#[derive(Levels)]` at expansion time, because
 `Options::RUBRIC` is a `const` and cannot call a function, and offers `Rubric` for the rubric
-positions that are not an enum. Python renders where a rubric becomes wire text, so
+positions that are not an enum, rendered by `Display` where a caller wants the string itself. Python renders where a rubric becomes wire text, so
 `choose_among()` and `score_levels()` accept an `option()` / `level()` value directly, while
 Rust's equivalents keep taking `&str` and a caller passes a pre-rendered string; widening them
 risks inference breakage for existing callers and is deferred to 0.2.0. Equivalent inputs
@@ -89,12 +89,26 @@ option. The same string as an example of one option and a counterexample of **an
 legitimate and must stay legal — it is exactly the confusable-options pattern this feature
 exists for.
 
+Two definitions, because they are the kind of thing two SDKs drift on silently:
+
+- **Empty or whitespace-only** means the string is empty once characters with the Unicode
+  `White_Space` property are removed from both ends. That is exactly Rust's `str::trim`.
+  Python's `str.strip()` is a *superset*: it also strips the C0 separators `U+001C`–`U+001F`,
+  which `White_Space` does not include, so a rubric of a single `U+001C` is blank to Python and
+  not to Rust. The boundary is stated rather than resolved, because the characters involved are
+  unreachable from a keyboard. An SDK that wants to match exactly should trim on `White_Space`.
+- **Duplicate detection is exact string equality**, with no trimming, case folding or Unicode
+  normalisation. `"a"` and `" a"` are two different examples and both are legal. Only the
+  emptiness check trims, so the two rules deliberately disagree about what `" a"` is.
+
 An empty or whitespace-only rubric is rejected **only where examples were attached to it** —
 you described nothing. A rubric that carries neither keeps whatever an SDK did before this
 feature existed, because rejecting it would be a new error for a declaration that has nothing
-to do with examples. That line holds on the runtime paths too, wherever the language cannot
-reach a declaration: Python refuses `option("", examples=[…])` when it is constructed, Rust
-returns `Error::Config` when the question carrying it is asked.
+to do with examples. Every rule above that a single rubric can see holds on the runtime paths
+too, wherever the language cannot reach a declaration: Python refuses them when the rubric is
+constructed, Rust returns `Error::Config` when the question carrying it is asked. The rules
+that compare two options — an example shared by both, and the must-allow overlap — need a
+whole declaration in view, and in Rust are compile-time only.
 
 ## 4. Interface shape
 

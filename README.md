@@ -113,8 +113,9 @@ guide.ask(
 ```
 
 This is where examples earn the most: on that ticket, plain criteria answer 0.75 and these
-answer 0.25 — and 0.25 is right. `criteria` already took anything `Into<String>`, so a plain
-pair of strings keeps working unchanged.
+answer 0.25 — and 0.25 is right. `criteria` accepts a description or a `Rubric`, and a
+description is anything `String` converts from, so a plain pair of strings keeps working
+unchanged.
 
 ## Install
 

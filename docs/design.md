@@ -55,9 +55,20 @@ Each module survives the test.
   criteria carrying examples answer 0.25 — a 0.49 swing, to the correct answer, because one of
   the `false` examples is "a broken job with a manual workaround". A noul has no enum to hang
   attributes off, so the parts arrive as `Rubric`. It is a builder rather than a second
-  `criteria` method: `criteria` widened from `impl Into<String>` to `impl Into<Rubric>`, and
-  `Rubric` converts from everything `String` converts from, so every existing call still
-  compiles. Widening rather than overloading is what gives the runtime path an error channel.
+  `criteria` method: `criteria` takes `impl IntoRubric`, a sealed trait with a blanket case for
+  everything `Into<String>` covers and one more for `Rubric` itself. That is a true widening —
+  every call that compiled against `impl Into<String>` still compiles, including a caller's own
+  helper generic over `Into<String>`, which no set of `From<T> for Rubric` conversions can
+  reach. The price is that `Rubric` must not be `Into<String>`, or the two cases overlap, so it
+  renders through `Display` instead. Widening rather than overloading is what gives the runtime
+  path an error channel.
+- **Compatibility claims get compiled, not reasoned about.** The first attempt widened to
+  `impl Into<Rubric>` with `From<&str>` and `From<String>`, and argued from those that nothing
+  broke. Compiling one call of every shape `String` converts from found four that did —
+  `&String`, `Cow<'_, str>`, `Box<str>`, `char` — and compiling a caller's generic helper found
+  a fifth that conversions could not fix at all. Every one was invisible to inspection.
+  `guideme/tests/rubric.rs` carries a `const _: fn() = || { … }` block of one call per shape,
+  so the claim is a build failure rather than a sentence.
 - **`Not this option` is the measured label.** Four runs each on the confusable-options case,
   all three candidates correct 4/4: `Not this option` 0.865 mean probability on the right
   option, `Not` 0.845, `Counterexamples` 0.830.
@@ -90,10 +101,12 @@ Each module survives the test.
   counterexample of another stays legal: that is the confusable-options pattern the feature
   exists for, and `guideme/tests/live.rs` uses it.
 - **`Rubric` is checked when the question is asked, not when it is built.** A builder has no
-  `Result` to return, so the check lives in `Noul::wire`, which already returns `Error::Config`
-  for the other malformed-question cases. It fires on the one rule that does not need a whole
-  declaration to see: examples attached to a blank description. The contradiction checks need
-  every variant at once and stay in the derive.
+  `Result` to return, so the checks live in `Rubric::into_wire`, called from `Noul::wire`, which
+  already returns `Error::Config` for the other malformed-question cases. Everything one rubric
+  can see is checked there — an empty entry, a duplicate within a clause, a string that is both
+  an example and a counterexample, examples attached to a blank description — in the derive's
+  wording, so the two read as one rule. Only the checks that compare two options need a whole
+  declaration, and those stay in the derive.
 - **A rubric with no examples renders to itself.** This is what keeps 0.1.1 non-breaking, and
   it is why `what` is never trimmed or re-punctuated. `spec/vectors/rubric.json` pins it, and
   `guideme-derive` property-tests it.

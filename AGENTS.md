@@ -81,7 +81,7 @@ Bump the version, regenerate the spec, and say so in `CHANGELOG.md`.
 ## Tests
 
 Few tests, high grade. The ceiling is 30 entries in the run the gate performs — what
-`cargo nextest run --workspace` reports, which is 28 today. The `#[ignore]`d live tests are
+`cargo nextest run --workspace` reports, which is 29 today. The `#[ignore]`d live tests are
 not in it: they never execute in the gate, so they are not what the ceiling protects. A new
 test must be one of:
 
