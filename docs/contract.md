@@ -82,13 +82,12 @@ Where the rendering happens is each language's business, and the SDKs differ on 
 renders inside `#[derive(Choice)]` / `#[derive(Levels)]` at expansion time, because
 `Options::RUBRIC` is a `const` and cannot call a function, and offers `Rubric` for the rubric
 positions that are not an enum. Rust has no unchecked way to render one: `Rubric::render`
-returns `Result`, and there is deliberately no `Display`, so a caller feeding a rubric into the
-`&str` constructors gets the checks rather than bypassing them. Python renders where a rubric
-becomes wire text, so
-`choose_among()` and `score_levels()` accept an `option()` / `level()` value directly, while
-Rust's equivalents keep taking `&str` and a caller passes a pre-rendered string; widening them
-risks inference breakage for existing callers and is deferred to 0.2.0. Equivalent inputs
-produce identical wire bytes either way; only the convenience differs.
+returns `Result`, and there is deliberately no `Display`. Python renders where a rubric becomes
+wire text. Both SDKs' **runtime** constructors take a rubric that carries examples —
+`Rubric` in Rust's `choose_among()` and `score_levels()`, `option()` and `level()` in
+Python's — so a description and a rubric are interchangeable in every rubric position in both.
+Equivalent inputs produce identical wire bytes either way; only the moment of the check
+differs.
 
 Declaration-time validation is shared. Rejected loudly: an empty or whitespace-only example or
 counterexample; a duplicate string within one option's examples or within its counterexamples;
@@ -145,13 +144,14 @@ refused-versus-documented line; it is not two arbitrary decisions.
 An empty or whitespace-only rubric is rejected **only where examples were attached to it** —
 you described nothing. A rubric that carries neither keeps whatever an SDK did before this
 feature existed, because rejecting it would be a new error for a declaration that has nothing
-to do with examples. Every rule above that a single rubric can see holds on the runtime paths
-too, wherever the language cannot reach a declaration: Python refuses them when the rubric is
-constructed, Rust returns `Error::Config` when the question carrying it is asked. The rules
-that compare two options need more than one rubric in view, so where they can be applied
-differs: a noul holds its `true` and `false` rubrics together and both SDKs reject an example
-shared by the two, while a choice built from runtime options has no such moment in Rust and the
-rule is compile-time only there. The must-allow overlap is never rejected anywhere.
+to do with examples.
+
+**Every rule above holds on every path**, declaration and runtime, in both SDKs. That includes
+the two that need more than one rubric in view — an example shared by two options or two
+levels, and a counterexample on a level — because every runtime constructor holds the whole
+set at once. Only the moment differs: Python refuses when the question is built
+(`ConfigError`), Rust when the question is asked (`Error::Config`). A declaration is legal in
+both SDKs or in neither. The must-allow overlap is never rejected anywhere.
 
 ## 4. Interface shape
 
@@ -169,6 +169,20 @@ Mirror the verbs, in the idiom of the language:
   has the same shape;
 - unsure resolution in this order: the question's fallback value, the enum's fallback
   member, then a typed unsure error; the detailed reading never fails on unsure;
+- a way to read, alongside the answer, the response's `model` (the versioned id that answered)
+  and its `usage` (`input_tokens`, `output_tokens`): Rust's `Guide::ask_with_receipt` returning
+  `Receipt<T> { answer, model, usage }`, Python's `ask_with_receipt` returning `Receipt[T]`
+  with the same three fields;
+- a retry policy: `429` and `529` are retried with exponential backoff honouring an integer
+  `retry-after`, on both `POST /v1/systemone` and `GET /v1/models`; a connection failure — the
+  request never reached a server, so a refused or reset connection or a TLS handshake failure —
+  is retried in the same budget; **a timeout of any phase** (connect, read, write) and a body
+  failure are not. The reason is stated rather than left to each SDK: Rust sets one overall
+  deadline per attempt, under which a connect-phase timeout is indistinguishable from a read
+  timeout — `reqwest` classifies it as `is_timeout()`, not `is_connect()` — and a retried
+  timeout multiplies the wall time the builder promises; Python matches by not retrying
+  `httpx.ConnectTimeout` either. After the last retry, `429` is a rate-limited error and `529`
+  an overloaded error, each carrying the `retry-after` the API last sent;
 - telemetry with the names in `docs/observability.md`: one `guideme.ask` span per `ask` with
   the `gen_ai.*` attributes, one HTTP client span per attempt, one `guideme.answer` event per
   answer, and `error.type` from the same list of names. The names are the contract so that

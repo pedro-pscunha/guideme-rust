@@ -12,7 +12,7 @@ explicit and composable. Every request is one tracing span. The decision logic i
 its contract is published under `spec/`, so every guideme SDK, in any language, answers the
 same way.
 
-```rust
+```rust,no_run
 use guideme::{choose, noul, score, Choice, Guide, Levels};
 
 #[derive(Choice, Clone, Copy, PartialEq, Eq, Debug)]
@@ -36,22 +36,25 @@ enum Frustration {
     VeryAngry,
 }
 
-let guide = Guide::from_env()?; // reads TYPESAFE_API_KEY
+async fn triage(ticket: &str) -> Result<(), guideme::Error> {
+    let guide = Guide::from_env()?; // reads TYPESAFE_API_KEY
 
-if guide.ask(noul("Should this ticket be escalated?"), ticket).await? {
-    escalate();
-}
+    if guide.ask(noul("Should this ticket be escalated?"), ticket).await? {
+        // escalate
+    }
 
-match guide.ask(choose::<Department>("Which team should handle this?"), ticket).await? {
-    Department::Billing => route_billing(),
-    Department::Technical => route_tech(),
-    Department::Sales => route_sales(), // also the answer when confidence is below the floor
-}
+    match guide.ask(choose::<Department>("Which team should handle this?"), ticket).await? {
+        Department::Billing => {}
+        Department::Technical => {}
+        Department::Sales => {} // also the answer when confidence is below the floor
+    }
 
-if guide.ask(score::<Frustration>("How frustrated is the customer?"), ticket).await?
-    >= Frustration::Frustrated
-{
-    prioritise();
+    if guide.ask(score::<Frustration>("How frustrated is the customer?"), ticket).await?
+        >= Frustration::Frustrated
+    {
+        // prioritise
+    }
+    Ok(())
 }
 ```
 
@@ -64,6 +67,8 @@ A description alone leaves confusable options to a coin flip. Name the inputs th
 an option, and the ones that do not:
 
 ```rust
+use guideme::Choice;
+
 #[derive(Choice, Clone, Copy, PartialEq, Eq, Debug)]
 enum Department {
     /// Payments, invoicing, refunds
@@ -100,16 +105,20 @@ counterexample of another is exactly the point, and stays legal.
 
 A noul has no enum to hang attributes off, so it takes `Rubric`, which composes the same way:
 
-```rust
-guide.ask(
-    noul("Is this ticket urgent?").criteria(
-        Rubric::new("Something is broken now and nobody can work around it")
-            .example("the checkout page is down")
-            .counterexample("a nightly job failed and we pull the numbers by hand for now"),
-        Rubric::new("It can wait for the next working day"),
-    ),
-    ticket,
-).await?
+```rust,no_run
+use guideme::{noul, Guide, Rubric};
+
+async fn urgent(guide: &Guide, ticket: &str) -> Result<bool, guideme::Error> {
+    guide.ask(
+        noul("Is this ticket urgent?").criteria(
+            Rubric::new("Something is broken now and nobody can work around it")
+                .example("the checkout page is down")
+                .counterexample("a nightly job failed and we pull the numbers by hand for now"),
+            Rubric::new("It can wait for the next working day"),
+        ),
+        ticket,
+    ).await
+}
 ```
 
 This is where examples earn the most: on that ticket, plain criteria answer 0.75 and these
@@ -128,7 +137,7 @@ or in `Cargo.toml`:
 
 ```toml
 [dependencies]
-guideme = "0.1"
+guideme = "0.2"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 ```
 
@@ -150,6 +159,29 @@ Set `TYPESAFE_API_KEY` in the environment, or pass a key to `Guide::builder().ap
 A noul can carry `.criteria("what yes means", "what no means")`. Instructions accept a string
 or a `serde_json::Value`, so a question can reference structured data by field name the way
 the TypeSafe docs describe.
+
+The runtime pair takes a description or a `Rubric` in every rubric position, so options and
+levels that come from a database carry examples the same way a derived enum does:
+
+```rust,no_run
+use guideme::{choose_among, Guide, Key, Rubric};
+
+async fn desk(guide: &Guide, ticket: &str) -> Result<Key, guideme::Error> {
+    guide.ask(choose_among("Which desk?", [
+        ("returns", Some(Rubric::new("Whether an item can be returned")
+            .example("Can I return these?")
+            .counterexample("Has my return arrived yet?"))),
+        ("tracking", Some(Rubric::new("Progress of a return already sent")
+            .example("Has my return arrived yet?"))),
+    ]), ticket).await
+}
+```
+
+One list has one rubric type, so a list where every option is bare needs it named once:
+`[("a", None::<&str>), ("b", None)]`. The rules are checked when the question is asked, and
+they are the derives' rules: a shared example, an empty or duplicated one, a counterexample on
+a level. A declaration the derive accepts is accepted here, and one it rejects is rejected
+here.
 
 The state is anything serialisable: a text literal, a `String`, a `serde_json::Value`, or a
 reference to your own struct.
@@ -178,16 +210,21 @@ boundary it missed. `.detail()` skips the ladder and hands you the reading to de
 
 House policies are constants, because the setters are `const fn`:
 
-```rust
+```rust,no_run
+use guideme::{noul, ApiKey, Guide, Policy, Verdict};
+
 const CAUTIOUS: Policy = Policy::new().yes_above(0.7).no_below(0.3);
 
-let guide = Guide::builder().api_key(key).policy(CAUTIOUS).build()?;
-let strict = guide.with_policy(Policy::new().min_confidence(0.8))?;
+async fn route(key: ApiKey, ticket: &str) -> Result<(), guideme::Error> {
+    let guide = Guide::builder().api_key(key).policy(CAUTIOUS).build()?;
+    let strict = guide.with_policy(Policy::new().min_confidence(0.8))?;
 
-match guide.ask(noul("Is this about billing?").detail(), ticket).await? {
-    Verdict::Yes(_) => billing(),
-    Verdict::No(_) => other(),
-    Verdict::Unsure(p) => review(p),
+    match strict.ask(noul("Is this about billing?").detail(), ticket).await? {
+        Verdict::Yes(_) => {}                                 // billing
+        Verdict::No(_) => {}                                  // everything else
+        Verdict::Unsure(p) => println!("a human decides: {}", p.get()),
+    }
+    Ok(())
 }
 ```
 
@@ -196,21 +233,33 @@ match guide.ask(noul("Is this about billing?").detail(), ticket).await? {
 A tuple of questions is a question. So is a `Vec` or a `BTreeMap`, and they nest. The answer
 has the same shape, from one request and one span. Each question keeps its own policy.
 
-```rust
-let labels = BTreeMap::from([
-    ("spam", noul("Is it spam?")),
-    ("vip", noul("Is the sender a VIP?")),
-]);
+```rust,no_run
+# use guideme::{Choice, Levels};
+# #[derive(Choice, Clone, Copy, PartialEq, Eq, Debug)]
+# enum Department { /** Payments */ Billing, /** Bugs */ Technical }
+# #[derive(Levels, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+# enum Frustration { /** Calm */ Calm, /** Angry */ Angry }
+use std::collections::BTreeMap;
 
-let (urgent, dept, mood, flags) = guide.ask((
-    noul("Is this urgent?").yes_above(0.7).no_below(0.3).or(false),
-    choose::<Department>("Which team?").min_confidence(0.6),
-    score::<Frustration>("How frustrated?").detail(),
-    labels,                                      // comes back as BTreeMap<&str, bool>
-), &ticket).await?;
+use guideme::{choose, noul, score, Guide};
 
-if urgent || mood.value > 1.5 || flags["vip"] {
-    prioritise();
+async fn triage(guide: &Guide, ticket: &str) -> Result<(), guideme::Error> {
+    let labels = BTreeMap::from([
+        ("spam", noul("Is it spam?")),
+        ("vip", noul("Is the sender a VIP?")),
+    ]);
+
+    let (urgent, dept, mood, flags) = guide.ask((
+        noul("Is this urgent?").yes_above(0.7).no_below(0.3).or(false),
+        choose::<Department>("Which team?").min_confidence(0.6),
+        score::<Frustration>("How frustrated?").detail(),
+        labels,                                      // comes back as BTreeMap<&str, bool>
+    ), ticket).await?;
+
+    if urgent || mood.value > 1.5 || flags["vip"] {
+        // prioritise
+    }
+    Ok(())
 }
 ```
 
@@ -223,7 +272,7 @@ events. A batch is atomic: one answer that cannot be resolved fails the whole ca
 guideme emits `tracing` spans and events and installs nothing: no subscriber, no file, no
 exporter. Add a subscriber and it appears. The smallest one:
 
-```rust
+```rust,no_run
 tracing_subscriber::fmt().with_env_filter("warn,guideme=info").init();
 ```
 
@@ -251,15 +300,111 @@ One enum, `guideme::Error`, for everything:
 | `Auth` | 401 |
 | `Invalid { detail }` | 422, body included |
 | `RateLimited { retry_after }` | 429 after retries, or a `retry-after` too long to wait for |
-| `Overloaded` | 529 after retries |
+| `Overloaded { retry_after }` | 529, same |
 | `Transport(..)` | connection, TLS, timeout |
 | `UnexpectedStatus { status, body }` | anything the contract does not define |
 | `Protocol { detail }` | the response violates the contract: undecodable body, wrong answer kind, option or level not in the rubric, probability outside 0..1 |
 | `Unsure { question, value, threshold }` | the policy said unsure and nothing caught it |
-| `Config { detail }` | bad thresholds, missing key, empty batch, unserialisable state, empty or duplicate rubric |
+| `Config { detail }` | bad thresholds, missing key, empty batch, unserialisable state, empty or duplicate rubric, a setting that an injected client already carries |
 
-Retries on 429 and 529 use exponential backoff with jitter, capped at 30 s, and honour
-`retry-after`.
+Retries use exponential backoff with jitter, capped at 30 s, and honour `retry-after`. What is
+retried: 429, 529, and a request that never reached a server — a refused or reset connection, a
+TLS handshake failure. Both endpoints, so a throttle on a startup `models()` call does not fail
+the boot. What is not: **a timeout of any phase**, or a body failure. `timeout` is one deadline
+over the whole attempt, so a connect-phase timeout cannot be told apart from a read timeout,
+and retrying either would multiply the wall time that setting promises.
+
+Hand in your own client with `http(..)` and the classification is that client's: guideme still
+retries what `reqwest` reports as a connection failure, so a `connect_timeout` set on your
+client makes connect timeouts retryable. guideme never sets one.
+
+## The receipt
+
+`ask` returns the answer. `ask_with_receipt` returns the same answer plus what the response
+said about itself: the versioned model that produced it, and the tokens it cost.
+
+```rust,no_run
+# use guideme::Choice;
+# #[derive(Choice, Clone, Copy, PartialEq, Eq, Debug)]
+# enum Department { /** Payments */ Billing, /** Bugs */ Technical }
+use guideme::{choose, Guide};
+
+async fn cost(guide: &Guide, ticket: &str) -> Result<Department, guideme::Error> {
+    let receipt = guide.ask_with_receipt(choose::<Department>("Which team?"), ticket).await?;
+    // input tokens are the billed ones; the model is the version that answered
+    println!("{} tokens from {}", receipt.usage.input_tokens, receipt.model.as_str());
+    Ok(receipt.answer)
+}
+```
+
+Same request, same span, same fields. `ask` is this with everything but the answer dropped.
+
+## Testing your code
+
+Point the guide at a mock server and your control flow runs without a network or an API key.
+
+```rust
+use guideme::{noul, Guide};
+use wiremock::matchers::{method, path};
+use wiremock::{Mock, MockServer, ResponseTemplate};
+
+const URGENT: &str = r#"{
+  "model": "jev-1.13.0",
+  "answers": { "q0": { "type": "noul", "noul": 0.95 } },
+  "usage": { "input_tokens": 307, "output_tokens": 20 }
+}"#;
+
+#[tokio::test]
+async fn an_urgent_ticket_is_escalated() -> Result<(), Box<dyn std::error::Error>> {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/systemone"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(URGENT))
+        .mount(&server)
+        .await;
+
+    let guide = Guide::builder()
+        .api_key("test-key".into())
+        .base_url(server.uri())
+        .build()?;
+
+    assert!(guide.ask(noul("Should this be escalated?"), "payouts down").await?);
+    Ok(())
+}
+```
+
+`wiremock = "0.6"` goes in your `[dev-dependencies]`; guideme does not pull it in for you.
+
+Question ids are `q0..qN` in encounter order, so a batch answers `q0`, `q1` and so on in the
+order you wrote it. `server.received_requests()` is how you assert on what was sent.
+
+For a proxy, a client certificate, or a transport shared with the rest of the application,
+hand in the client instead:
+
+```rust
+use std::time::Duration;
+
+use guideme::api::{reqwest, Client};
+use guideme::Guide;
+
+fn configured() -> Result<Guide, Box<dyn std::error::Error>> {
+    let http = reqwest::Client::builder().timeout(Duration::from_secs(10)).build()?;
+    let client = Client::builder("key".into())
+        .base_url("https://api.typesafe.ai")
+        .http(http)
+        .build()?;
+    Ok(Guide::builder().client(client).build()?)
+}
+```
+
+`guideme::api::reqwest` is the `reqwest` guideme links, re-exported so you do not add a
+dependency of your own and do not have to keep a version in step: two `reqwest` majors in one
+tree are two unrelated `Client` types and the call would not compile. The flip side is that a
+`reqwest` major bump is a breaking change for guideme.
+
+Everything the client carries — the key, the base URL, the retry budget, the backoff, the
+timeout — is refused by name if you also set it on the guide builder, so a setting never
+quietly does nothing.
 
 ## Lower layers
 
@@ -295,12 +440,20 @@ attribute names, so one dashboard reads both.
 | `TYPESAFE_BASE_URL` | optional API origin override |
 | `GUIDEME_MODEL` | optional model or alias; default `jev-latest` |
 
+`Guide::from_env()?` is the one-liner. `Guide::builder().from_env()?` reads the same three
+variables onto a builder you are still configuring, so a house policy and an environment key
+compose: `Guide::builder().from_env()?.policy(CAUTIOUS).build()?`.
+
+The rest of the builder: `model`, `policy`, `max_retries` (default 3), `backoff` (default
+500 ms, the base of the exponential), `timeout` (default 30 s, per attempt), `record_state`,
+and `client` for an injected transport.
+
 ## Development
 
 Tooling is managed by [mise](https://mise.jdx.dev); `mise install` fetches gitleaks,
 cargo-nextest and cargo-deny. The toolchain is pinned in `rust-toolchain.toml`.
 
-```
+```sh
 mise run check    # fmt-check, clippy -D warnings, nextest, doctests, rustdoc, cargo-deny
 mise run test     # nextest + doctests
 mise run spec     # regenerate spec/ after changing api, policy, or the vector grid
@@ -318,7 +471,7 @@ compile-fail suite for the derives, and a drift guard that re-resolves every gol
 
 Two opt-in tests hit the real API and are skipped by default:
 
-```
+```sh
 TYPESAFE_API_KEY=… cargo nextest run -p guideme --test live --run-ignored ignored-only --no-capture
 ```
 

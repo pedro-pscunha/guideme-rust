@@ -61,6 +61,13 @@
 // `spec` declares enums through this crate's own derives, which expand to `::guideme` paths.
 extern crate self as guideme;
 
+/// The README's Rust blocks, compiled by `cargo test --doc`. Nothing else reads this item; it
+/// exists so the front page cannot drift from the API the way untested prose does. Blocks that
+/// would open a connection are `no_run`: they compile, they do not dial.
+#[cfg(doctest)]
+#[doc = include_str!("../README.md")]
+struct Readme;
+
 pub mod api;
 mod ask;
 mod error;
@@ -72,9 +79,10 @@ mod scalars;
 #[doc(hidden)]
 pub mod spec;
 
+pub use api::{ModelInfo, Usage};
 pub use ask::Ask;
 pub use error::Error;
-pub use guide::{Guide, GuideBuilder};
+pub use guide::{Guide, GuideBuilder, Receipt};
 pub use guideme_derive::{Choice, Levels};
 pub use policy::{Policy, Thresholds, Verdict};
 pub use question::{

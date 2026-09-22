@@ -28,11 +28,11 @@ use crate::Error;
 /// [`render`](Rubric::render) enforces every rule one rubric can see, in the derives' wording:
 /// an empty example or counterexample, a duplicate within either clause, the same string as
 /// both an example and a counterexample, and examples attached to a blank rubric. Two rules it
-/// cannot see, because they need something outside the rubric: an example shared by two
-/// options, which is checked for a noul's pair when the question is asked but not across the
-/// options of [`choose_among`](crate::choose_among), and a counterexample on a level, which
-/// only [`score_levels`](crate::score_levels) knows it is building. Both are compile errors
-/// under the derives.
+/// cannot see, because they need something outside the rubric, are applied where the question
+/// is asked and the whole set is in view: an example shared by two options or two levels, and
+/// a counterexample on a level, which only [`score_levels`](crate::score_levels) knows it is
+/// building. Both are compile errors under the derives and [`Error::Config`] on the runtime
+/// paths, so a declaration is legal on both or on neither.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Rubric {
     what: String,
@@ -103,20 +103,83 @@ impl Rubric {
     }
 }
 
-/// Check a noul's pair, then render both. An example asserts that an input belongs to this
-/// side, so the same string on both sides asserts it belongs to each — the rule the derive
-/// applies across a `Choice`'s options, on the only runtime path that holds both in view.
+/// Check a noul's pair, then render both.
 pub(crate) fn render_pair(yes: &Rubric, no: &Rubric) -> Result<(String, String), Error> {
-    for example in &yes.examples {
-        if no.examples.contains(example) {
+    check_shared(&[yes, no], "option", |i| {
+        if i == 0 { "yes" } else { "no" }.to_owned()
+    })?;
+    Ok((yes.render()?, no.render()?))
+}
+
+/// Check a choice's options against each other, then render each. A key with no rubric stays
+/// `None`: the wire distinguishes an option described as nothing from one not described.
+pub(crate) fn render_options(
+    options: &[(String, Option<Rubric>)],
+) -> Result<Vec<(String, Option<String>)>, Error> {
+    let described: Vec<(&str, &Rubric)> = options
+        .iter()
+        .filter_map(|(key, rubric)| rubric.as_ref().map(|r| (key.as_str(), r)))
+        .collect();
+    let rubrics: Vec<&Rubric> = described.iter().map(|(_, r)| *r).collect();
+    check_shared(&rubrics, "option", |i| format!("{:?}", described[i].0))?;
+    options
+        .iter()
+        .map(|(key, rubric)| {
+            let rendered = match rubric {
+                Some(rubric) => Some(rubric.render()?),
+                None => None,
+            };
+            Ok((key.clone(), rendered))
+        })
+        .collect()
+}
+
+/// Check a score's levels against each other, then render each.
+///
+/// A level may not carry a counterexample: it is a position on an ordered scale, not an
+/// option to rule out. `#[derive(Levels)]` makes that a compile error; this is the same rule
+/// where there is no declaration to reject.
+pub(crate) fn render_levels(levels: &[Rubric]) -> Result<Vec<String>, Error> {
+    for (i, level) in levels.iter().enumerate() {
+        if !level.counterexamples.is_empty() {
             return Err(Error::Config {
                 detail: format!(
-                    "{example:?} is an example of both yes and no; an input belongs to one option"
+                    "a counterexample is not allowed on level {i}; a level is a position on a scale, not an option to rule out"
                 ),
             });
         }
     }
-    Ok((yes.render()?, no.render()?))
+    let rubrics: Vec<&Rubric> = levels.iter().collect();
+    check_shared(&rubrics, "level", |i| format!("level {i}"))?;
+    levels.iter().map(Rubric::render).collect()
+}
+
+/// The rule no single rubric can see. An example asserts that an input belongs here, so the
+/// same string under two of them asserts it belongs to each — what the derives check across a
+/// `Choice`'s variants at expansion time, applied on the runtime paths that hold every rubric
+/// in view at once. `label` names a position the way the caller's own surface does, so the
+/// message points at something they wrote.
+fn check_shared(
+    rubrics: &[&Rubric],
+    noun: &str,
+    label: impl Fn(usize) -> String,
+) -> Result<(), Error> {
+    for (i, rubric) in rubrics.iter().enumerate() {
+        for example in &rubric.examples {
+            for (j, earlier) in rubrics[..i].iter().enumerate() {
+                if earlier.examples.contains(example) {
+                    return Err(Error::Config {
+                        detail: format!(
+                            "{example:?} is an example of both {} and {}; an input belongs to one {noun}",
+                            label(j),
+                            label(i)
+                        ),
+                    });
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Reject an empty entry, a line break, or a repeat within one clause. Whitespace-only counts

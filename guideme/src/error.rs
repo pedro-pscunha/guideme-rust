@@ -22,9 +22,16 @@ pub enum Error {
         retry_after: Option<Duration>,
     },
     /// `529` after every retry was used.
-    #[error("TypeSafe is overloaded")]
-    Overloaded,
-    /// Connection, TLS, timeout, or body-read failure.
+    #[error("TypeSafe is overloaded (retry-after: {retry_after:?})")]
+    Overloaded {
+        /// The last `retry-after` the API sent, if any.
+        retry_after: Option<Duration>,
+    },
+    /// Connection, TLS, timeout, or body-read failure. A failure to connect — refused, reset,
+    /// or a TLS handshake — is retried inside the same budget as a throttle. A timeout of any
+    /// phase and a body failure are not: the client sets one deadline over the whole attempt,
+    /// so a connect-phase timeout cannot be told apart from a read timeout, and retrying
+    /// either would multiply the wall time that deadline promises.
     #[error("transport failure: {0}")]
     Transport(#[source] Box<dyn std::error::Error + Send + Sync>),
     /// A status the API contract does not define.
@@ -73,7 +80,7 @@ impl Error {
             Error::Auth => "auth",
             Error::Invalid { .. } => "invalid",
             Error::RateLimited { .. } => "rate_limited",
-            Error::Overloaded => "overloaded",
+            Error::Overloaded { .. } => "overloaded",
             Error::Transport(_) => "transport",
             Error::UnexpectedStatus { .. } => "unexpected_status",
             Error::Protocol { .. } => "protocol",

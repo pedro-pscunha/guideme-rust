@@ -12,6 +12,18 @@ use serde::{Deserialize, Serialize};
 
 pub use client::{Client, ClientBuilder};
 
+/// The `reqwest` this crate was built against.
+///
+/// [`ClientBuilder::http`] takes a `reqwest::Client`, so a caller injecting a transport needs
+/// the exact version guideme links, not merely a compatible-looking one: two `reqwest` majors
+/// in a tree are two unrelated types and the call would not compile. Reaching it as
+/// `guideme::api::reqwest::Client` gets the right one without a dependency of your own, and
+/// without a version to keep in step.
+///
+/// The cost is stated where the release rules are: a `reqwest` major bump is a breaking change
+/// for guideme.
+pub use reqwest;
+
 /// Most options a choice may carry.
 pub const MAX_OPTIONS: usize = 255;
 /// Most levels a score may carry.

@@ -362,7 +362,7 @@ dependencies = [
 
 [[package]]
 name = "guideme"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "guideme-derive",
  "reqwest",
@@ -376,7 +376,7 @@ dependencies = [
 
 [[package]]
 name = "guideme-derive"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "heck",
  "proc-macro2",

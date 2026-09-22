@@ -24,10 +24,10 @@ The live TypeSafe docs are the source of truth for the wire contract, over two p
 | Path | Owns | Rule |
 |---|---|---|
 | `guideme/src/api/mod.rs` | exact wire mirror of `POST /v1/systemone` and `GET /v1/models` | mirrors the docs field for field; no policy here |
-| `guideme/src/api/client.rs` | HTTP, retries, status → `Error`, one HTTP client span per attempt and the `guideme.retry` event | the only file that may name `reqwest`; span fields follow the OpenTelemetry HTTP client conventions |
+| `guideme/src/api/client.rs` | HTTP, retries, status → `Error`, one HTTP client span per attempt and the `guideme.retry` event | the only file that may use `reqwest`'s API; `api/mod.rs` only re-exports the crate. Span fields follow the OpenTelemetry HTTP client conventions |
 | `guideme/src/policy.rs` | `resolve(&Answer, Thresholds) -> Outcome`, `Policy`, `Thresholds` | pure: no I/O, no generics, no Rust enums; its behaviour is the shared contract |
 | `guideme/src/question.rs` | question kinds, constructors, `Options`/`Levels` traits, the unsure ladder | every kind stays sealed |
-| `guideme/src/rubric.rs` | `Rubric`, the runtime half of the rubric renderer | renders identically to `guideme-derive`; a test pins the two |
+| `guideme/src/rubric.rs` | `Rubric`, the runtime half of the rubric renderer, and the rules that need more than one rubric in view | renders identically to `guideme-derive`; a test pins the two. Every **rubric** rule the derives enforce at expansion time is enforced here when the question is asked, so a rubric is legal under both or under neither. Rules about the declaration itself — at least two variants, unit variants only, one fallback — are the derives' alone; there is no runtime declaration to apply them to |
 | `guideme/src/ask.rs` | the `Ask` shape trait (question, tuple, `Vec`, `BTreeMap`) | sealed; ids are `q0..qN` in encounter order |
 | `guideme/src/guide.rs` | `Guide::ask`, spans and events | one `guideme.ask` span per request, one `guideme.answer` event per question; span fields follow the OpenTelemetry GenAI conventions, anything else is namespaced `guideme.` |
 | `guideme/src/spec.rs`, `src/bin/spec.rs` | schemas and golden vectors under `spec/` | regenerate with `mise run spec`; the drift test fails otherwise |
@@ -37,7 +37,7 @@ The live TypeSafe docs are the source of truth for the wire contract, over two p
 
 Telemetry is `tracing` only; the crate installs no subscriber. The shape: one `guideme.ask`
 span per `Guide::ask` (target `guideme`), one HTTP client span per attempt beneath it
-(`POST /v1/systemone`, target `guideme::api`) with a `guideme.retry` warning when throttled,
+(`POST /v1/systemone`, target `guideme::api`) with a `guideme.retry` warning before each wait,
 and one `guideme.answer` event per question. `docs/observability.md` records every field; a
 change to any of them must land there in the same commit, and the names are part of the
 cross-SDK contract (see below).
@@ -80,10 +80,13 @@ Bump the version, regenerate the spec, and say so in `CHANGELOG.md`.
 
 ## Tests
 
-Few tests, high grade. The ceiling is 30 entries in the run the gate performs — what
-`cargo nextest run --workspace` reports, which is 29 today. The `#[ignore]`d live tests are
-not in it: they never execute in the gate, so they are not what the ceiling protects. A new
-test must be one of:
+Few tests, high grade. The ceiling is 36 entries in the run the gate performs — what
+`cargo nextest run --workspace` reports, which is 35 today. It was 30 through 0.1.1; 0.2.0
+raised it by six because that release added six behaviours nothing else could pin: the
+receipt, the retry of `GET /v1/models`, the retry of a connection failure, and the two
+cross-option rules the runtime constructors can now apply, plus the refusal of a setting an
+injected client already carries. The `#[ignore]`d live tests are not in it: they never execute
+in the gate, so they are not what the ceiling protects. A new test must be one of:
 
 - a property test (`proptest`) over a law of `policy::resolve` or the wire types;
 - a wire or contract check through `wiremock`, asserting on received requests and typed results;
@@ -162,6 +165,16 @@ renderer lives twice, in `guideme-derive` and in `guideme/src/rubric.rs`, becaus
 `Options::RUBRIC` is a `const`; change both, and the pin in `guideme/tests/rubric.rs` is what
 catches you if you do not.
 
+So is changing *which* rubric declarations are legal. The rules are one set, enforced twice:
+the derives reject at expansion time, `rubric.rs` rejects with `Error::Config` when the
+question is asked. That includes the two that need more than one rubric in view — an example
+shared by two options or two levels, and a counterexample on a level — which every runtime
+constructor can now apply because it holds the whole set at once. Adding or relaxing one of
+them means both places, `docs/contract.md`, and an issue in every other SDK: a rubric must be
+legal in all of them or in none. The derives' other rules — at least two variants, unit
+variants only, one fallback — are about the declaration rather than the rubric, have no
+runtime counterpart to drift from, and are not contract.
+
 Renaming, adding or removing a span or event field is also a contract change: it goes through
 `docs/observability.md`, `docs/contract.md` and `CHANGELOG.md`, and is announced the same way.
 `spec/` is unaffected.
@@ -171,6 +184,20 @@ Renaming, adding or removing a span or event field is also a contract change: it
 Both crates are on crates.io and share the workspace `version`. `guideme` depends on
 `guideme-derive` by version, so the two are always published together, derive first. Cargo
 orders them itself.
+
+`guideme/README.md` is a symlink to the repository's `README.md`, and `readme = "README.md"`
+points at it. Do not replace it with a copy or point the manifest back up a level: `cargo
+package` materialises the README at the **package root**, so the packaged `src/lib.rs` is one
+directory below it, and the `include_str!("../README.md")` that puts the README under
+`cargo test --doc` has to resolve to the same place in the worktree and in the published crate.
+The symlink is what makes the two layouts agree. `cargo package -p guideme --list` showing
+`README.md` at the root is the check.
+
+`reqwest` is on the public surface: `api::ClientBuilder::http` takes a `reqwest::Client` and
+`api::reqwest` re-exports the crate, so **a `reqwest` major bump is a breaking change for
+guideme** and needs a major bump of its own. That is the price of transport injection being
+usable without the caller pinning `reqwest` themselves; `docs/design.md` records the trade.
+No other dependency is on the surface, and none should join it without the same note here.
 
 **A published version is permanent.** It can be yanked, which stops new dependents resolving
 to it and leaves existing lock files alone, but it can never be deleted or replaced. Get the

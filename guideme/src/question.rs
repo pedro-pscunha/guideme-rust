@@ -130,14 +130,14 @@ pub struct Noul {
 /// One of `C`'s options.
 #[derive(Clone, Debug)]
 pub struct Choose<C: Options> {
-    rubric: Vec<(String, Option<String>)>,
+    options: Vec<(String, Option<Rubric>)>,
     _c: PhantomData<fn() -> C>,
 }
 
 /// A level of `L`.
 #[derive(Clone, Debug)]
 pub struct Score<L: Levels> {
-    levels: Vec<String>,
+    levels: Vec<Rubric>,
     _l: PhantomData<fn() -> L>,
 }
 
@@ -228,18 +228,19 @@ impl Fallible for Noul {
 impl<C: Options> Kind for Choose<C> {
     type Out = C;
     fn wire(&self, instructions: Instructions) -> Result<api::Question, Error> {
-        if self.rubric.is_empty() {
+        if self.options.is_empty() {
             return Err(Error::Config {
                 detail: "a choice needs at least one option".into(),
             });
         }
-        if self.rubric.len() > MAX_OPTIONS {
+        if self.options.len() > MAX_OPTIONS {
             return Err(Error::Config {
                 detail: format!("a choice may have at most {MAX_OPTIONS} options"),
             });
         }
-        let criteria: BTreeMap<String, Option<String>> = self.rubric.iter().cloned().collect();
-        if criteria.len() != self.rubric.len() {
+        let criteria: BTreeMap<String, Option<String>> =
+            rubric::render_options(&self.options)?.into_iter().collect();
+        if criteria.len() != self.options.len() {
             return Err(Error::Config {
                 detail: "duplicate option keys".into(),
             });
@@ -276,17 +277,17 @@ impl<C: Options> Fallible for Choose<C> {
         else {
             return Err(mismatch(id, "choice", &outcome));
         };
-        if ranked.len() != self.rubric.len() {
+        if ranked.len() != self.options.len() {
             return Err(Error::Protocol {
                 detail: format!(
                     "question {id}: answer has {} options, rubric has {}",
                     ranked.len(),
-                    self.rubric.len()
+                    self.options.len()
                 ),
             });
         }
         let map = |k: &str| {
-            if !self.rubric.iter().any(|(r, _)| r == k) {
+            if !self.options.iter().any(|(option, _)| option == k) {
                 return Err(Error::Protocol {
                     detail: format!("question {id}: option {k:?} is not in the rubric"),
                 });
@@ -320,7 +321,7 @@ impl<L: Levels> Kind for Score<L> {
         }
         Ok(api::Question::Score {
             instructions,
-            criteria: self.levels.clone(),
+            criteria: rubric::render_levels(&self.levels)?,
         })
     }
     fn read(&self, id: &str, outcome: Outcome, t: Thresholds, or: Option<L>) -> Result<L, Error> {
@@ -498,33 +499,61 @@ pub fn noul(instructions: impl Into<Instructions>) -> Question<Noul> {
 }
 
 /// Pick one of `C`'s options. Plain output: `C`.
+///
+/// The derive rendered each rubric at expansion time, so the [`Rubric`] wrapped around it here
+/// carries no parts of its own and renders to it byte for byte.
 pub fn choose<C: Options>(instructions: impl Into<Instructions>) -> Question<Choose<C>> {
-    let rubric = C::RUBRIC
+    let options = C::RUBRIC
         .iter()
-        .map(|(k, r)| ((*k).to_owned(), r.map(str::to_owned)))
+        .map(|(key, rubric)| ((*key).to_owned(), rubric.map(Rubric::new)))
         .collect();
     question(
         instructions,
         Choose {
-            rubric,
+            options,
             _c: PhantomData,
         },
     )
 }
 
 /// Pick one of runtime options `(key, rubric)`. Plain output: [`Key`].
-pub fn choose_among<'a>(
+///
+/// A rubric is a description — anything `String` converts from — or a [`Rubric`] carrying
+/// examples and counterexamples; `None` describes the option not at all. One list has one
+/// rubric type, so a list where every option is bare needs it named once:
+/// `[("a", None::<&str>), ("b", None)]`.
+///
+/// The rules are checked when the question is asked, in the derives' wording: everything a
+/// single rubric can see, plus an example shared by two options.
+///
+/// ```
+/// use guideme::{choose_among, Rubric};
+///
+/// let question = choose_among("Which desk?", [
+///     ("returns", Some(Rubric::new("Whether an item can be returned")
+///         .example("Can I return these?")
+///         .counterexample("Has my return arrived yet?"))),
+///     ("tracking", Some(Rubric::new("Progress of a return already sent")
+///         .example("Has my return arrived yet?"))),
+/// ]);
+/// # let _ = question;
+/// ```
+pub fn choose_among<K, R>(
     instructions: impl Into<Instructions>,
-    options: impl IntoIterator<Item = (&'a str, Option<&'a str>)>,
-) -> Question<Choose<Key>> {
-    let rubric = options
+    options: impl IntoIterator<Item = (K, Option<R>)>,
+) -> Question<Choose<Key>>
+where
+    K: Into<String>,
+    R: IntoRubric,
+{
+    let options = options
         .into_iter()
-        .map(|(k, r)| (k.to_owned(), r.map(str::to_owned)))
+        .map(|(key, rubric)| (key.into(), rubric.map(IntoRubric::into_rubric)))
         .collect();
     question(
         instructions,
         Choose {
-            rubric,
+            options,
             _c: PhantomData,
         },
     )
@@ -535,21 +564,36 @@ pub fn score<L: Levels>(instructions: impl Into<Instructions>) -> Question<Score
     question(
         instructions,
         Score {
-            levels: L::LEVELS.iter().map(|s| (*s).to_owned()).collect(),
+            levels: L::LEVELS.iter().map(|level| Rubric::new(*level)).collect(),
             _l: PhantomData,
         },
     )
 }
 
 /// Rate on runtime levels, low to high. Plain output: [`Rank`].
-pub fn score_levels<'a>(
+///
+/// A level is a description or a [`Rubric`] carrying examples. It may not carry a
+/// counterexample: a level is a position on a scale, not an option to rule out, and asking for
+/// one is [`Error::Config`] when the question is asked, as it is a compile error under
+/// `#[derive(Levels)]`.
+///
+/// ```
+/// use guideme::{score_levels, Rubric};
+///
+/// let question = score_levels("How urgent?", [
+///     Rubric::new("can wait").example("a typo in a label"),
+///     Rubric::new("today").example("the checkout page is down"),
+/// ]);
+/// # let _ = question;
+/// ```
+pub fn score_levels<R: IntoRubric>(
     instructions: impl Into<Instructions>,
-    levels: impl IntoIterator<Item = &'a str>,
+    levels: impl IntoIterator<Item = R>,
 ) -> Question<Score<Rank>> {
     question(
         instructions,
         Score {
-            levels: levels.into_iter().map(str::to_owned).collect(),
+            levels: levels.into_iter().map(IntoRubric::into_rubric).collect(),
             _l: PhantomData,
         },
     )

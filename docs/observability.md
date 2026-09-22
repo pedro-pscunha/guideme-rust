@@ -13,7 +13,7 @@ reads it without a mapping step.
 ```
 guideme.ask                      span, kind client, one per Guide::ask
 ├── POST /v1/systemone           span, kind client, one per HTTP attempt
-│   └── guideme.retry            WARN event, only when that attempt was throttled
+│   └── guideme.retry            WARN event, only when that attempt is about to be retried
 └── guideme.answer               INFO event, one per question
 ```
 
@@ -21,7 +21,8 @@ The ask span and the answer events carry the target `guideme`; the HTTP spans an
 event carry `guideme::api`. A batch of three questions is one ask span, one HTTP span if the
 first attempt succeeds, and three answer events. A retried request is one ask span with
 sibling HTTP spans, each with its own status code. `Guide::models` has no ask span of its
-own: it emits a bare `GET /v1/models` span under whatever span the caller is in.
+own: it emits a bare `GET /v1/models` span under whatever span the caller is in, one per
+attempt, because that endpoint is retried on the same statuses as `POST /v1/systemone`.
 
 ### Span `guideme.ask`
 
@@ -64,7 +65,7 @@ it a chat would make products that key on that value read it as one.
 | `url.template` | str | `/v1/systemone` or `/v1/models`, the low-cardinality form of the path |
 | `http.request.resend_count` | i64 | ordinal of the retry, absent on the first attempt |
 | `http.response.status_code` | i64 | absent when no response arrived |
-| `error.type` | str | the status code as text when a response arrived, else [`Error::kind`] |
+| `error.type` | str | the status code as text on a non-200, otherwise [`Error::kind`] |
 | `otel.status_code` | str | `ERROR` on any non-200 status or transport failure |
 
 A `429` that was retried and then succeeded is one failed attempt span next to one
@@ -94,15 +95,28 @@ what the model answered rather than what the caller ended up with.
 
 ### Event `guideme.retry`
 
-Emitted at `WARN` inside the throttled attempt's span, just before the wait.
+Emitted at `WARN` inside the failed attempt's span, just before the wait.
 
 | Field | Type | Meaning |
 |---|---|---|
-| `http.response.status_code` | i64 | `429` or `529` |
+| `http.response.status_code` | i64 | `429` or `529`; absent when no response arrived |
+| `error.type` | str | `transport`; present only when no response arrived |
 | `guideme.retry.attempt` | i64 | ordinal of the resend about to be made; `1` for the first retry |
 | `guideme.retry.delay_ms` | i64 | how long guideme is about to wait |
 
-The message is `429 from TypeSafe, retrying in 1000 ms`.
+**Exactly one of `http.response.status_code` and `error.type` is present on every retry
+event.** A response that was throttled carries its status; an attempt that never reached a
+server — a refused or reset connection, a TLS handshake failure — has no status to report and
+carries `error.type = "transport"` instead. Those are retried inside the same budget and with
+the same backoff, because the request went nowhere. A timeout of any phase and a body failure
+are not retried, so they never produce a retry event: they mark the attempt's span and are
+returned. A client handed in through `ClientBuilder::http` brings its own classification: a
+`connect_timeout` set on it does make connect timeouts retryable, and those do produce a retry
+event. The attempt's own span is marked failed with `error.type = "transport"` either way, as
+it already was for a transport failure that was not retried.
+
+The message is `429 from TypeSafe, retrying in 1000 ms`, or `could not reach TypeSafe,
+retrying in 500 ms`.
 
 ### Errors
 
@@ -113,7 +127,8 @@ on, and it keeps the caller in charge of whether and where the failure is logged
 
 `error.type` values on the ask span: `auth`, `invalid`, `rate_limited`, `overloaded`,
 `transport`, `unexpected_status`, `protocol`, `unsure`, `config`. On an HTTP span it is the
-status code as text when a response arrived, otherwise one of those names.
+status code as text on a non-200, otherwise one of those names — a `200` whose body failed to
+read or decode is marked with `transport` or `protocol`, not with `200`.
 
 The status description is the error's message, except for `invalid` and
 `unexpected_status`: those errors carry the verbatim response body, which could echo the

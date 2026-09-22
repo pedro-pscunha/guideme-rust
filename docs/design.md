@@ -47,7 +47,16 @@ Each module survives the test.
   example) and cheaper (400 against 450 billed input tokens for the same content). The gain
   comes from the examples being present, not from the JSON structure. So the composition
   happens in the proc macro at expansion time, `Options::RUBRIC` and `Levels::LEVELS` keep
-  their types, and `question.rs`, `api/` and the wire are untouched.
+  their types, and `question.rs`, `api/` and the wire are untouched. One of the three reasons
+  lapsed at 0.2.0 — the runtime constructors now take `Rubric`, so "it would change a public
+  type" no longer applies to them — and the two measured ones, equal quality and 400 against
+  450 billed tokens, are what keeps it rejected.
+- **No synchronous `Guide`.** A blocking twin would be a second execution mode over the same
+  policy layer: either a duplicated `Client` on `reqwest::blocking`, which cannot be called
+  from inside a runtime, or a `block_on` wrapper, which deadlocks on a current-thread runtime
+  and is a footgun in exactly the applications that would reach for it. Rust callers who need
+  one already have `Runtime::block_on` at their own boundary, where they can see which runtime
+  they are in. Python has two guides because its ecosystem is genuinely split; Rust's is not.
 - **All three kinds take examples, and a noul gets them through a builder.** A noul's
   `true`/`false` criteria are as confusable as a choice's options, and measured the largest
   swing of the three: on `Our nightly export job has been failing since Tuesday. We pull the
@@ -84,6 +93,16 @@ Each module survives the test.
   newline needs no punctuation heuristic and measured equivalent in quality, for two extra
   tokens. `what` is used verbatim, which is what makes a rubric with no examples render to
   itself byte for byte.
+- **Transport injection puts `reqwest` on the public surface, deliberately.**
+  `api::ClientBuilder::http` takes a `reqwest::Client`, which is the only way to hand in a
+  proxy, a client certificate or a shared pool without guideme growing a setter per feature
+  `reqwest` already has. A caller cannot supply that type from their own dependency unless it
+  resolves to the same major, so `api::reqwest` re-exports the one guideme links: two majors
+  in a tree are two unrelated `Client` types and the call simply would not compile, with an
+  error that names neither cause. The price is that a `reqwest` major bump becomes a guideme
+  breaking change, which is recorded under Releasing in `AGENTS.md`. A `dyn` transport trait
+  of our own would avoid it and cost more than it saves: `reqwest`'s builder is the interface
+  callers already know, and wrapping it would hide the features they came for.
 - **Telemetry speaks OpenTelemetry.** The ask span uses the GenAI conventions, each HTTP attempt is its own client span with the HTTP conventions, and a failure is `error.type` plus an error status on the span rather than an `ERROR` event. Anything without a convention is namespaced `guideme.`. The crate depends on `tracing` only; `docs/observability.md` shows the exporter side.
 
 ## Sharp edges
@@ -107,9 +126,10 @@ Each module survives the test.
   path every caller reaches for and every check would be optional. Everything one rubric can see
   is checked there — an empty entry, a duplicate within a clause, a string that is both an
   example and a counterexample, examples attached to a blank rubric — in the derive's wording,
-  so the two read as one rule. A noul's pair is checked together for a shared example, because
-  it is the one runtime path holding two rubrics at once; `choose_among` has no such moment, so
-  there the cross-option rules stay compile-time only.
+  so the two read as one rule. The rules that need more than one rubric in view are checked
+  where the whole set is held at once, which since 0.2.0 is every runtime path: a noul's pair,
+  `choose_among`'s options and `score_levels`'s levels. A declaration is legal under the derive
+  and at runtime, or under neither.
 - **A rubric with no examples renders to itself.** This is what keeps 0.1.1 non-breaking, and
   it is why `what` is never trimmed or re-punctuated. `spec/vectors/rubric.json` pins it, and
   `guideme-derive` property-tests it.

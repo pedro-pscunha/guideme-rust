@@ -15,7 +15,10 @@
 //! this job: its vector is generated from the derive, so it re-states whatever the renderer
 //! currently does. `ROWS` is written by hand, which is the point.
 
-use guideme::{Choice, Guide, Levels, Noul, Options, Question, Rubric, choose, noul, score};
+use guideme::{
+    Choice, Guide, Levels, Noul, Options, Question, Rubric, choose, choose_among, noul, score,
+    score_levels,
+};
 use proptest::prelude::*;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -96,6 +99,39 @@ const _: fn() = || {
     let _ = noul("q").criteria('y', owned.as_mut_str());
     let _ = noul("q").criteria(Rubric::new("y").example("e"), Rubric::new("n"));
     let _ = passthrough("a", "b");
+};
+
+/// `choose_among` took `(&str, Option<&str>)` in 0.1.x and takes `(K: Into<String>,
+/// Option<R: IntoRubric>)` now; `score_levels` took `&str` and takes `R: IntoRubric`. Same
+/// deal as the block above: this never runs, it compiling is the claim. One list has one `R`,
+/// so a list where every option is bare needs the type named once — the last pair below is
+/// that shape, and dropping the turbofish is `E0283`, not a silent narrowing.
+const _: fn() = || {
+    fn options<S: Into<String>>(
+        pairs: Vec<(S, Option<S>)>,
+    ) -> Question<guideme::Choose<guideme::Key>> {
+        choose_among("q", pairs)
+    }
+    fn levels<S: Into<String>>(items: Vec<S>) -> Question<guideme::Score<guideme::Rank>> {
+        score_levels("q", items)
+    }
+    let owned = String::from("x");
+    let cow: std::borrow::Cow<'_, str> = std::borrow::Cow::Borrowed("x");
+    let _ = choose_among("q", [("a", Some("what a means")), ("b", None)]);
+    let _ = choose_among(
+        "q",
+        [
+            ("a", Some(Rubric::new("what a means").example("e"))),
+            ("b", None::<Rubric>),
+        ],
+    );
+    let _ = choose_among("q", [(owned.clone(), Some(owned.clone()))]);
+    let _ = choose_among("q", [("a", Some(cow))]);
+    let _ = choose_among("q", [("a", None::<&str>), ("b", None)]);
+    let _ = options(vec![("a", Some("x"))]);
+    let _ = score_levels("q", ["low", "high"]);
+    let _ = score_levels("q", [Rubric::new("low").example("e"), Rubric::new("high")]);
+    let _ = levels(vec![owned]);
 };
 
 /// `(what, examples, counterexamples, rendered)`, in the order the variants are declared
@@ -318,4 +354,143 @@ async fn ask_criteria(
     guide
         .ask(noul("Is this urgent?").criteria(yes, no), "state")
         .await
+}
+
+const DESKS: &str = r#"{"model":"jev-1.13.0","answers":{
+  "q0":{"type":"choice","choice":"policy","probabilities":{"policy":0.7,"status":0.3},"confidence":0.9}
+},"usage":{"input_tokens":1,"output_tokens":1}}"#;
+
+/// A choice built from runtime options is the second path that holds every rubric at once, so
+/// the cross-option rule the derive applies to a `Choice`'s variants applies here too. Both
+/// halves matter: the must-allow overlap has to stay legal, or the pattern the whole feature
+/// exists for would be unreachable from `choose_among`.
+#[tokio::test]
+async fn choose_among_applies_the_cross_option_rules_at_ask_time()
+-> Result<(), Box<dyn std::error::Error>> {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/systemone"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(DESKS))
+        .mount(&server)
+        .await;
+    let guide = Guide::builder()
+        .api_key("k".into())
+        .base_url(server.uri())
+        .build()?;
+
+    guide
+        .ask(
+            choose_among(
+                "Which desk?",
+                [
+                    (
+                        "policy",
+                        Some(
+                            Rubric::new("Whether and how an item can be returned")
+                                .example("Can I return these?")
+                                .counterexample("Has my return arrived yet?"),
+                        ),
+                    ),
+                    (
+                        "status",
+                        Some(
+                            Rubric::new("Progress of a return already sent")
+                                .example("Has my return arrived yet?"),
+                        ),
+                    ),
+                ],
+            ),
+            "where is my parcel",
+        )
+        .await?;
+
+    let received = server.received_requests().await.unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&received[0].body)?;
+    assert_eq!(
+        body["questions"]["q0"]["criteria"],
+        serde_json::json!({
+            "policy": Confusable::RUBRIC[0].1,
+            "status": "Progress of a return already sent\nExamples: Has my return arrived yet?",
+        })
+    );
+
+    let shared = guide
+        .ask(
+            choose_among(
+                "Which desk?",
+                [
+                    (
+                        "policy",
+                        Some(Rubric::new("Returns").example("Can I return these?")),
+                    ),
+                    (
+                        "status",
+                        Some(Rubric::new("Tracking").example("Can I return these?")),
+                    ),
+                ],
+            ),
+            "where is my parcel",
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(&shared, guideme::Error::Config { detail }
+            if detail.contains("\"policy\"") && detail.contains("\"status\"")),
+        "the refusal should name both options, got {shared:?}"
+    );
+    Ok(())
+}
+
+/// A level is a position on a scale, so it has no "not this option" — the rule
+/// `#[derive(Levels)]` makes a compile error, on the path where there is no declaration to
+/// reject. The shared example is the same rule as above with levels in place of options.
+#[tokio::test]
+async fn score_levels_refuses_a_counterexample_on_a_level() -> Result<(), Box<dyn std::error::Error>>
+{
+    // No request is made: both questions are refused before the client is reached, and an
+    // unroutable origin with no retries is what proves it.
+    let guide = Guide::builder()
+        .api_key("k".into())
+        .base_url("http://127.0.0.1:1")
+        .max_retries(0)
+        .build()?;
+
+    let ruled_out = guide
+        .ask(
+            score_levels(
+                "How urgent?",
+                [
+                    Rubric::new("can wait").counterexample("the site is down"),
+                    Rubric::new("today"),
+                ],
+            ),
+            "state",
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(&ruled_out, guideme::Error::Config { detail }
+            if detail.contains("position on a scale")),
+        "a counterexample on a level should be refused, got {ruled_out:?}"
+    );
+
+    let shared = guide
+        .ask(
+            score_levels(
+                "How urgent?",
+                [
+                    Rubric::new("can wait").example("a typo in a label"),
+                    Rubric::new("today").example("a typo in a label"),
+                ],
+            ),
+            "state",
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(&shared, guideme::Error::Config { detail }
+            if detail.contains("level 0") && detail.contains("level 1")),
+        "the refusal should name both levels, got {shared:?}"
+    );
+    Ok(())
 }
