@@ -71,9 +71,12 @@ itself. A rubric written as a bare string puts the same bytes on the wire as it 
 exactly. Every case also carries `kind` — `"choice"`, `"levels"` or `"noul"` — naming the
 question kind the rubric sits in. Nothing rendered from a level's declared parts carries a
 counterexample clause, because a level is a position on a scale rather than an option to rule
-out; that is why a counterexample on a level is refused outright, below. An example under a
-level *is* the statement that such an input scores there — no numeric annotation is added to
-the text.
+out; that is why a counterexample on a level is refused outright, below — a compile error on
+Rust's `Levels` derive, a refusal in Python's `level()`. The guarantee is over declared parts:
+neither SDK can stop a caller pre-rendering a rubric that carries a counterexample and handing
+the string to a runtime level constructor, which is the trusted-input boundary above. An
+example under a level *is* the statement that such an input scores there — no numeric
+annotation is added to the text.
 
 Where the rendering happens is each language's business, and the SDKs differ on purpose. Rust
 renders inside `#[derive(Choice)]` / `#[derive(Levels)]` at expansion time, because
