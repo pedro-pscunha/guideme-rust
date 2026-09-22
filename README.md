@@ -324,7 +324,7 @@ client makes connect timeouts retryable. guideme never sets one.
 said about itself: the versioned model that produced it, and the tokens it cost.
 
 ```rust,no_run
-# use guideme::{Choice, Levels};
+# use guideme::Choice;
 # #[derive(Choice, Clone, Copy, PartialEq, Eq, Debug)]
 # enum Department { /** Payments */ Billing, /** Bugs */ Technical }
 use guideme::{choose, Guide};
@@ -372,6 +372,8 @@ async fn an_urgent_ticket_is_escalated() -> Result<(), Box<dyn std::error::Error
     Ok(())
 }
 ```
+
+`wiremock = "0.6"` goes in your `[dev-dependencies]`; guideme does not pull it in for you.
 
 Question ids are `q0..qN` in encounter order, so a batch answers `q0`, `q1` and so on in the
 order you wrote it. `server.received_requests()` is how you assert on what was sent.
