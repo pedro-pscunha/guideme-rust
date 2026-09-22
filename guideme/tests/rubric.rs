@@ -10,9 +10,12 @@
 //!
 //! There are two renderers: the proc macro's, which runs at expansion time because
 //! `Options::RUBRIC` is a `const`, and `Rubric`'s, for the positions that are not an enum.
-//! Every golden row below is asserted against both, which is what keeps them one algorithm.
+//! Every golden row below is asserted against both — the derive's through the request body it
+//! produces, `Rubric`'s directly — which is what keeps them one algorithm. `spec/` cannot do
+//! this job: its vector is generated from the derive, so it re-states whatever the renderer
+//! currently does. `ROWS` is written by hand, which is the point.
 
-use guideme::{Choice, Guide, Levels, Options, Rubric, choose, noul, score};
+use guideme::{Choice, Guide, Levels, Rubric, choose, noul, score};
 use proptest::prelude::*;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -121,25 +124,6 @@ fn runtime(what: &str, examples: &[&str], counterexamples: &[&str]) -> String {
     rubric.into()
 }
 
-#[test]
-fn every_golden_row_renders_byte_for_byte_from_both_renderers() {
-    let derived: Vec<&str> = Golden::RUBRIC
-        .iter()
-        .chain(GoldenCounter::RUBRIC)
-        .map(|&(_, rubric)| rubric.expect("every golden variant has a rubric"))
-        .chain(Severity::LEVELS.iter().copied())
-        .collect();
-    assert_eq!(derived.len(), ROWS.len());
-    for (from_derive, (what, examples, counterexamples, want)) in derived.iter().zip(ROWS) {
-        assert_eq!(*from_derive, want, "the derive drifted on {what:?}");
-        assert_eq!(
-            runtime(what, examples, counterexamples),
-            want,
-            "Rubric drifted on {what:?}"
-        );
-    }
-}
-
 proptest! {
     /// The load-bearing invariant: a rubric with no parts is its own rendering, so a
     /// declaration written before examples existed puts the same bytes on the wire.
@@ -184,6 +168,17 @@ async fn the_rendered_rubric_is_what_reaches_the_wire() -> Result<(), Box<dyn st
             "the export button crashes",
         )
         .await?;
+
+    // The two renderers are ~10 duplicated lines, so nothing but a test keeps them one
+    // algorithm: every row below is asserted against the derive, through the request body,
+    // and against `Rubric`, here.
+    for (what, examples, counterexamples, want) in ROWS {
+        assert_eq!(
+            runtime(what, examples, counterexamples),
+            want,
+            "Rubric drifted from the derive on {what:?}"
+        );
+    }
 
     let received = server.received_requests().await.unwrap();
     let body: serde_json::Value = serde_json::from_slice(&received[0].body)?;
