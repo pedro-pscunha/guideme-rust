@@ -14,6 +14,7 @@
 | `Ask` shapes (`ask.rs`) | sealed trait over `Question<K>`, tuples, `Vec`, `BTreeMap` | id assignment in encounter order, per-question settled thresholds, decoding back into the same shape |
 | `Kind`s (`question.rs`) | `noul`, `choose`, `score`, `choose_among`, `score_levels`; `.with/.or/.detail/.criteria` and the three threshold one-liners | wire encoding per primitive, rubric membership checks, `Outcome` → typed value, the unsure ladder |
 | derives (`guideme-derive`) | `#[derive(Choice)]`, `#[derive(Levels)]` | doc comment → rubric, `example`/`counterexample` → the rendered rubric, snake_case keys, fallback, compile-time rule checks |
+| `Rubric` (`rubric.rs`) | `Rubric::new(what).example(..).counterexample(..)`, `Into<String>` | the same composition for the rubric positions that are not an enum |
 
 ## The deletion test
 
@@ -47,6 +48,24 @@ Each module survives the test.
   comes from the examples being present, not from the JSON structure. So the composition
   happens in the proc macro at expansion time, `Options::RUBRIC` and `Levels::LEVELS` keep
   their types, and `question.rs`, `api/` and the wire are untouched.
+- **All three kinds take examples, and a noul gets them through a builder.** A noul's
+  `true`/`false` criteria are as confusable as a choice's options, and measured the largest
+  swing of the three: on `Our nightly export job has been failing since Tuesday. We pull the
+  numbers by hand for now.` asked as "Is this ticket urgent?", plain criteria answer 0.75 and
+  criteria carrying examples answer 0.25 — a 0.49 swing, to the correct answer, because one of
+  the `false` examples is "a broken job with a manual workaround". A noul has no enum to hang
+  attributes off, so the parts arrive as `Rubric`. It is a builder rather than a second
+  `criteria` method because `Question<Noul>::criteria` already takes `impl Into<String>`: a
+  `Rubric` drops in with no signature change and no breakage, and a plain `&str` keeps working.
+- **`Not this option` is the measured label.** Four runs each on the confusable-options case,
+  all three candidates correct 4/4: `Not this option` 0.865 mean probability on the right
+  option, `Not` 0.845, `Counterexamples` 0.830.
+- **The renderer is duplicated once, on purpose.** `Rubric` renders at runtime and the proc
+  macro renders at expansion time, because `Options::RUBRIC` is a `const` and cannot call a
+  function. That is ~10 lines in two places. The alternatives are worse: a third published
+  crate to share them, forever, or turning `RUBRIC` into a function, which breaks a public
+  trait and forces 0.2.0. `guideme/tests/rubric.rs` pins the two together by asserting a real
+  derived enum's `RUBRIC` equals `Rubric`'s output for the same parts, on every golden row.
 - **Newline separation, no terminal punctuation.** Examples frequently end in `?`, and a
   space-joined format then needs a trailing `.` that produces `Where is my refund?.`. A
   newline needs no punctuation heuristic and measured equivalent in quality, for two extra
@@ -61,6 +80,17 @@ Each module survives the test.
 - **`Key` and `Rank`** are only meaningful through `choose_among` and `score_levels`. `choose::<Key>(..)` type-checks but is rejected at ask time with `Error::Config` because its rubric is empty.
 - **Two `Question`s.** `guideme::Question<K>` is the user-facing value; `guideme::api::Question` is the wire enum it becomes.
 - **`State` takes references.** `guide.ask(q, &ticket)` for any `Serialize` type; an owned struct is not accepted (coherence with the `String` and `Value` impls). Text literals work directly.
+- **Declaration order is contract.** Examples and counterexamples render in the order written.
+  Sorting them would be invisible locally and would silently diverge from another SDK, so
+  `spec/vectors/rubric.json` carries a case whose clauses are deliberately not in sorted order.
+- **An example cannot belong to two options.** Saying so asserts the input is both, which
+  cannot be true, and it is a compile error — as is the same string as an example and a
+  counterexample of the same option. The same string as an example of one option and a
+  counterexample of another stays legal: that is the confusable-options pattern the feature
+  exists for, and `guideme/tests/live.rs` uses it.
+- **`Rubric` carries no declaration-time checks.** It is the runtime path, like `choose_among`,
+  where there is no declaration to reject and no `Result` to return from a builder that feeds
+  `impl Into<String>`. The compile errors live in the derive, where they can fire.
 - **A rubric with no examples renders to itself.** This is what keeps 0.1.1 non-breaking, and
   it is why `what` is never trimmed or re-punctuated. `spec/vectors/rubric.json` pins it, and
   `guideme-derive` property-tests it.

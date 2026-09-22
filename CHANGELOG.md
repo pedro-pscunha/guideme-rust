@@ -8,9 +8,19 @@
   string at expansion time, so `Options::RUBRIC`, `Levels::LEVELS`, the wire and the schemas are
   unchanged. A rubric with no examples and no counterexamples renders to itself, byte for byte,
   so every 0.1.0 declaration puts the same bytes on the wire.
+- `Rubric`, a small builder for the rubric positions that are not an enum:
+  `Rubric::new(what).example(..).counterexample(..)` composes the same way and is
+  `Into<String>`, so `noul(..).criteria(yes, no)` takes it with no signature change and a plain
+  pair of strings keeps working. All three question kinds now take examples; a noul's
+  `true`/`false` criteria measured the largest swing of the three.
 - Declaration-time checks, each a compile error naming the rule: an empty or whitespace-only
-  rubric, an empty example or counterexample, a duplicate within one variant's examples, an
-  example on a variant with no rubric, and `counterexample` on a `Levels` derive.
+  rubric, example or counterexample; a duplicate within one variant's examples; an example on a
+  variant with no rubric; `counterexample` on a `Levels` derive; the same string as an example
+  of two different variants; and the same string as both an example and a counterexample of one
+  variant. The same string as an example of one option and a counterexample of another stays
+  legal — that is the confusable-options pattern the feature exists for.
+- Examples and counterexamples render in declaration order, and the `Not this option` label is
+  fixed. Both are contract, and `spec/vectors/rubric.json` covers them.
 - `spec/vectors/rubric.json`: the rendering is a cross-SDK contract item, published as golden
   cases generated from real derived enums. `spec/schema/` and `spec/vectors/policy.json` are
   byte-identical to 0.1.0.

@@ -37,8 +37,10 @@ patches merge question over guide over the defaults
 
 ## 3. Rubric rendering
 
-An option or a level may carry **examples** — inputs that belong to it — and an option may
-carry **counterexamples**, inputs that do not. They are composed into the rubric string the
+An option, a level, or either side of a noul's criteria may carry **examples** — inputs that
+belong to it — and an option or a noul criterion may carry **counterexamples**, inputs that do
+not. All three question kinds take them: a noul's `true`/`false` criteria are exactly as
+confusable as a choice's options, and measured the largest swing of the three. They are composed into the rubric string the
 API already takes rather than sent as the API's structured `criteria` objects;
 `docs/design.md` records why. The composition is byte-for-byte shared:
 
@@ -55,7 +57,11 @@ render(what, examples, counterexamples) -> string:
 ```
 
 Clauses are joined with a newline, items within a clause with `"; "`. No terminal punctuation
-is added, and `what` is used verbatim: never trimmed, never re-punctuated.
+is added, and `what` is used verbatim: never trimmed, never re-punctuated. Examples and
+counterexamples render in **declaration order**, always — two SDKs ordering differently would
+produce different bytes for the same declaration, so this is contract, not presentation. The
+`Not this option` label is contract for the same reason; it is also the best of the three
+labels measured.
 
 **The load-bearing invariant:** with no examples and no counterexamples the output is `what`
 itself. A rubric written as a bare string puts the same bytes on the wire as it did in 0.1.0.
@@ -67,15 +73,21 @@ an option to rule out, and an example under a level *is* the statement that such
 scores there — no numeric annotation is added to the text.
 
 Where the rendering happens is each language's business, and the SDKs differ on purpose. Rust
-renders inside `#[derive(Choice)]` / `#[derive(Levels)]` at expansion time, so `choose_among`
-and `score_levels` take an already-rendered string. Python renders where a rubric becomes wire
-text, so `choose_among()` and `score_levels()` accept an `option()` / `level()` value directly.
-Equivalent inputs produce identical wire bytes either way; only the convenience differs.
+renders inside `#[derive(Choice)]` / `#[derive(Levels)]` at expansion time, because
+`Options::RUBRIC` is a `const` and cannot call a function, and offers `Rubric` for the rubric
+positions that are not an enum. Python renders where a rubric becomes wire text, so
+`choose_among()` and `score_levels()` accept an `option()` / `level()` value directly, while
+Rust's equivalents keep taking `&str` and a caller passes a pre-rendered string; widening them
+risks inference breakage for existing callers and is deferred to 0.2.0. Equivalent inputs
+produce identical wire bytes either way; only the convenience differs.
 
-Declaration-time validation is shared: an empty or whitespace-only rubric, an empty example or
-counterexample, and a duplicate string within one option's examples or counterexamples are all
-rejected loudly. The same string as an example of one option and a counterexample of another is
-legitimate, and is exactly the confusable-options pattern this feature exists for.
+Declaration-time validation is shared. Rejected loudly: an empty or whitespace-only rubric,
+example or counterexample; a duplicate string within one option's examples or within its
+counterexamples; the same string as an example of two different options, or of two different
+levels, since it cannot belong to both; and the same string as both an example and a
+counterexample of the same option. The same string as an example of one option and a
+counterexample of **another** is legitimate and must stay legal — it is exactly the
+confusable-options pattern this feature exists for.
 
 ## 4. Interface shape
 
@@ -83,7 +95,8 @@ Mirror the verbs, in the idiom of the language:
 
 - constructors for a yes/no question, a choice over an enum, a score over an ordered enum,
   a choice over runtime options, and a score over runtime levels;
-- a way to attach examples to an option or a level, and counterexamples to an option;
+- a way to attach examples to an option, a level and a noul criterion, and counterexamples to
+  an option and a noul criterion;
 - question methods to patch the policy, set `yes_above` and `no_below` on nouls, set
   `min_confidence` on choice and score, set a fallback value, describe what yes and no mean
   on a noul, and switch to the detailed reading;
