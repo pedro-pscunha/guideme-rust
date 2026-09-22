@@ -185,6 +185,14 @@ Both crates are on crates.io and share the workspace `version`. `guideme` depend
 `guideme-derive` by version, so the two are always published together, derive first. Cargo
 orders them itself.
 
+`guideme/README.md` is a symlink to the repository's `README.md`, and `readme = "README.md"`
+points at it. Do not replace it with a copy or point the manifest back up a level: `cargo
+package` materialises the README at the **package root**, so the packaged `src/lib.rs` is one
+directory below it, and the `include_str!("../README.md")` that puts the README under
+`cargo test --doc` has to resolve to the same place in the worktree and in the published crate.
+The symlink is what makes the two layouts agree. `cargo package -p guideme --list` showing
+`README.md` at the root is the check.
+
 `reqwest` is on the public surface: `api::ClientBuilder::http` takes a `reqwest::Client` and
 `api::reqwest` re-exports the crate, so **a `reqwest` major bump is a breaking change for
 guideme** and needs a major bump of its own. That is the price of transport injection being
