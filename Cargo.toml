@@ -3,7 +3,7 @@ resolver = "3"
 members = ["guideme", "guideme-derive"]
 
 [workspace.package]
-version = "0.1.1"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.98"
 license = "MIT OR Apache-2.0"
@@ -12,7 +12,7 @@ keywords = ["typesafe", "llm", "ai", "judgment", "tracing"]
 categories = ["api-bindings", "asynchronous"]
 
 [workspace.dependencies]
-guideme-derive = { path = "guideme-derive", version = "0.1.1" }
+guideme-derive = { path = "guideme-derive", version = "0.2.0" }
 tokio = { version = "1.53", features = ["time"] }
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "json", "http2", "charset"] }
 serde = { version = "1.0", features = ["derive"] }

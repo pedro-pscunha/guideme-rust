@@ -47,7 +47,16 @@ Each module survives the test.
   example) and cheaper (400 against 450 billed input tokens for the same content). The gain
   comes from the examples being present, not from the JSON structure. So the composition
   happens in the proc macro at expansion time, `Options::RUBRIC` and `Levels::LEVELS` keep
-  their types, and `question.rs`, `api/` and the wire are untouched.
+  their types, and `question.rs`, `api/` and the wire are untouched. One of the three reasons
+  lapsed at 0.2.0 — the runtime constructors now take `Rubric`, so "it would change a public
+  type" no longer applies to them — and the two measured ones, equal quality and 400 against
+  450 billed tokens, are what keeps it rejected.
+- **No synchronous `Guide`.** A blocking twin would be a second execution mode over the same
+  policy layer: either a duplicated `Client` on `reqwest::blocking`, which cannot be called
+  from inside a runtime, or a `block_on` wrapper, which deadlocks on a current-thread runtime
+  and is a footgun in exactly the applications that would reach for it. Rust callers who need
+  one already have `Runtime::block_on` at their own boundary, where they can see which runtime
+  they are in. Python has two guides because its ecosystem is genuinely split; Rust's is not.
 - **All three kinds take examples, and a noul gets them through a builder.** A noul's
   `true`/`false` criteria are as confusable as a choice's options, and measured the largest
   swing of the three: on `Our nightly export job has been failing since Tuesday. We pull the
@@ -107,9 +116,10 @@ Each module survives the test.
   path every caller reaches for and every check would be optional. Everything one rubric can see
   is checked there — an empty entry, a duplicate within a clause, a string that is both an
   example and a counterexample, examples attached to a blank rubric — in the derive's wording,
-  so the two read as one rule. A noul's pair is checked together for a shared example, because
-  it is the one runtime path holding two rubrics at once; `choose_among` has no such moment, so
-  there the cross-option rules stay compile-time only.
+  so the two read as one rule. The rules that need more than one rubric in view are checked
+  where the whole set is held at once, which since 0.2.0 is every runtime path: a noul's pair,
+  `choose_among`'s options and `score_levels`'s levels. A declaration is legal under the derive
+  and at runtime, or under neither.
 - **A rubric with no examples renders to itself.** This is what keeps 0.1.1 non-breaking, and
   it is why `what` is never trimmed or re-punctuated. `spec/vectors/rubric.json` pins it, and
   `guideme-derive` property-tests it.

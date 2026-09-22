@@ -1,5 +1,69 @@
 # Changelog
 
+## 0.2.0 (2026-09-22)
+
+### Breaking
+
+- `choose_among` takes `(K: Into<String>, Option<R: IntoRubric>)` where it took
+  `(&str, Option<&str>)`, and `score_levels` takes `R: IntoRubric` where it took `&str`. A call
+  passing `Some("text")`, owned `String`s, a `Cow`, or pairs from a caller's own helper generic
+  over `Into<String>` still compiles; `guideme/tests/rubric.rs` carries one call of every shape,
+  so the claim is a build failure rather than a sentence. The one shape that needs a change is a
+  list where **every** option is bare: name the type once, `[("a", None::<&str>), ("b", None)]`,
+  because one list has one rubric type and nothing else says what it is.
+- `Error::Overloaded` is `Overloaded { retry_after: Option<Duration> }` where it was a unit
+  variant. A `529` parsed the header and then dropped it while a `429` kept it; now both carry
+  it.
+
+### Added
+
+- Runtime options and levels carry examples. `choose_among` and `score_levels` accept a
+  description or a `Rubric`, so a choice built from a database row gets the same rubric a
+  derived enum gets. Rendering is unchanged, byte for byte: `choose::<C>` wraps the derive's
+  already-rendered string in a `Rubric` that carries no parts, and a rubric with no parts
+  renders to itself.
+- The rules that need more than one rubric in view now hold on every path: an example shared
+  by two options or two levels, and a counterexample on a level, are `Error::Config` when the
+  question is asked, as they are compile errors under the derives. A declaration is legal under
+  both or under neither. `docs/contract.md` §3 loses the paragraph that said otherwise.
+- `Guide::ask_with_receipt` returns `Receipt<T> { answer, model, usage }`: the versioned model
+  that answered and the tokens the call cost, both of which used to reach the span and stop
+  there. `ask` is the same call with everything but the answer dropped. `Receipt`, `ModelInfo`
+  and `Usage` are re-exported at the crate root.
+- Transport injection. `api::ClientBuilder::http(reqwest::Client)` takes a configured client —
+  a proxy, a client certificate, a shared pool — and `GuideBuilder::client(api::Client)` takes
+  the whole client. Every setting an injected client already carries (`api_key`, `base_url`,
+  `max_retries`, `backoff`, `timeout`) is refused **by name** when it is also set on the guide
+  builder, and a `timeout` beside `http(..)` likewise: a setting that silently does nothing is
+  what this guards against.
+- `GuideBuilder::from_env()` reads `TYPESAFE_API_KEY` (required), `TYPESAFE_BASE_URL` and
+  `GUIDEME_MODEL` (optional) onto a builder you are still configuring, so
+  `Guide::builder().from_env()?.policy(HOUSE).build()?` works. `Guide::from_env()` stays as the
+  one-liner and delegates to it.
+- `GuideBuilder::backoff(Duration)`, which `api::ClientBuilder` had and the guide did not.
+- README gains a "Testing your code" section: a complete `#[tokio::test]` answering a noul
+  against a `wiremock` server, with no network and no API key.
+
+### Changed
+
+- `GET /v1/models` is retried on `429` and `529`, with the same budget, backoff and spans as
+  `POST /v1/systemone`. It was not retried at all, so a throttle on a startup `models()` call
+  failed the boot — which the API docs say the SDKs handle. Both endpoints now drive one retry
+  loop.
+- A failure to connect is retried inside the same budget: a refused connection, a reset, a TLS
+  handshake, a connect timeout. The request never reached a server, so sending it again is
+  safe. A read timeout and a body failure are still not retried — those reached a server, and
+  resending would double the wall time `timeout` promises.
+- The `guideme.retry` event carries `error.type = "transport"` and **no**
+  `http.response.status_code` when the attempt failed before a response. Exactly one of the two
+  is on every retry event. This is a telemetry contract change; `docs/observability.md` has the
+  field table.
+- A compile-time block in `guideme/tests/batch.rs` pins that `Guide::ask` futures are `Send`,
+  so `tokio::spawn` keeps working: an `Rc` reaching the future would otherwise break every
+  spawning caller on a patch upgrade with nothing to notice.
+- `spec/schema/` and `spec/vectors/` are byte-identical to 0.1.1. Neither the wire nor the
+  rendering moved.
+
 ## 0.1.1 (2026-09-22)
 
 - `#[guide(example = "…")]` and `#[guide(counterexample = "…")]`, both repeatable, compose a

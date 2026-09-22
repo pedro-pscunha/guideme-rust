@@ -27,7 +27,7 @@ The live TypeSafe docs are the source of truth for the wire contract, over two p
 | `guideme/src/api/client.rs` | HTTP, retries, status → `Error`, one HTTP client span per attempt and the `guideme.retry` event | the only file that may name `reqwest`; span fields follow the OpenTelemetry HTTP client conventions |
 | `guideme/src/policy.rs` | `resolve(&Answer, Thresholds) -> Outcome`, `Policy`, `Thresholds` | pure: no I/O, no generics, no Rust enums; its behaviour is the shared contract |
 | `guideme/src/question.rs` | question kinds, constructors, `Options`/`Levels` traits, the unsure ladder | every kind stays sealed |
-| `guideme/src/rubric.rs` | `Rubric`, the runtime half of the rubric renderer | renders identically to `guideme-derive`; a test pins the two |
+| `guideme/src/rubric.rs` | `Rubric`, the runtime half of the rubric renderer, and the rules that need more than one rubric in view | renders identically to `guideme-derive`; a test pins the two. Every rule the derives enforce at expansion time is enforced here when the question is asked, so a declaration is legal under both or under neither |
 | `guideme/src/ask.rs` | the `Ask` shape trait (question, tuple, `Vec`, `BTreeMap`) | sealed; ids are `q0..qN` in encounter order |
 | `guideme/src/guide.rs` | `Guide::ask`, spans and events | one `guideme.ask` span per request, one `guideme.answer` event per question; span fields follow the OpenTelemetry GenAI conventions, anything else is namespaced `guideme.` |
 | `guideme/src/spec.rs`, `src/bin/spec.rs` | schemas and golden vectors under `spec/` | regenerate with `mise run spec`; the drift test fails otherwise |
@@ -37,7 +37,7 @@ The live TypeSafe docs are the source of truth for the wire contract, over two p
 
 Telemetry is `tracing` only; the crate installs no subscriber. The shape: one `guideme.ask`
 span per `Guide::ask` (target `guideme`), one HTTP client span per attempt beneath it
-(`POST /v1/systemone`, target `guideme::api`) with a `guideme.retry` warning when throttled,
+(`POST /v1/systemone`, target `guideme::api`) with a `guideme.retry` warning before each wait,
 and one `guideme.answer` event per question. `docs/observability.md` records every field; a
 change to any of them must land there in the same commit, and the names are part of the
 cross-SDK contract (see below).
@@ -80,10 +80,13 @@ Bump the version, regenerate the spec, and say so in `CHANGELOG.md`.
 
 ## Tests
 
-Few tests, high grade. The ceiling is 30 entries in the run the gate performs — what
-`cargo nextest run --workspace` reports, which is 29 today. The `#[ignore]`d live tests are
-not in it: they never execute in the gate, so they are not what the ceiling protects. A new
-test must be one of:
+Few tests, high grade. The ceiling is 36 entries in the run the gate performs — what
+`cargo nextest run --workspace` reports, which is 35 today. It was 30 through 0.1.1; 0.2.0
+raised it by six because that release added six behaviours nothing else could pin: the
+receipt, the retry of `GET /v1/models`, the retry of a connection failure, and the two
+cross-option rules the runtime constructors can now apply, plus the refusal of a setting an
+injected client already carries. The `#[ignore]`d live tests are not in it: they never execute
+in the gate, so they are not what the ceiling protects. A new test must be one of:
 
 - a property test (`proptest`) over a law of `policy::resolve` or the wire types;
 - a wire or contract check through `wiremock`, asserting on received requests and typed results;
@@ -161,6 +164,14 @@ what makes every declaration written before the feature put the same bytes on th
 renderer lives twice, in `guideme-derive` and in `guideme/src/rubric.rs`, because
 `Options::RUBRIC` is a `const`; change both, and the pin in `guideme/tests/rubric.rs` is what
 catches you if you do not.
+
+So is changing *which* rubric declarations are legal. The rules are one set, enforced twice:
+the derives reject at expansion time, `rubric.rs` rejects with `Error::Config` when the
+question is asked. That includes the two that need more than one rubric in view — an example
+shared by two options or two levels, and a counterexample on a level — which every runtime
+constructor can now apply because it holds the whole set at once. Adding or relaxing a rule
+means both places, `docs/contract.md`, and an issue in every other SDK: a declaration must be
+legal in all of them or in none.
 
 Renaming, adding or removing a span or event field is also a contract change: it goes through
 `docs/observability.md`, `docs/contract.md` and `CHANGELOG.md`, and is announced the same way.

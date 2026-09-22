@@ -128,7 +128,7 @@ or in `Cargo.toml`:
 
 ```toml
 [dependencies]
-guideme = "0.1"
+guideme = "0.2"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 ```
 
@@ -150,6 +150,25 @@ Set `TYPESAFE_API_KEY` in the environment, or pass a key to `Guide::builder().ap
 A noul can carry `.criteria("what yes means", "what no means")`. Instructions accept a string
 or a `serde_json::Value`, so a question can reference structured data by field name the way
 the TypeSafe docs describe.
+
+The runtime pair takes a description or a `Rubric` in every rubric position, so options and
+levels that come from a database carry examples the same way a derived enum does:
+
+```rust
+guide.ask(choose_among("Which desk?", [
+    ("returns", Some(Rubric::new("Whether an item can be returned")
+        .example("Can I return these?")
+        .counterexample("Has my return arrived yet?"))),
+    ("tracking", Some(Rubric::new("Progress of a return already sent")
+        .example("Has my return arrived yet?"))),
+]), ticket).await?
+```
+
+One list has one rubric type, so a list where every option is bare needs it named once:
+`[("a", None::<&str>), ("b", None)]`. The rules are checked when the question is asked, and
+they are the derives' rules: a shared example, an empty or duplicated one, a counterexample on
+a level. A declaration the derive accepts is accepted here, and one it rejects is rejected
+here.
 
 The state is anything serialisable: a text literal, a `String`, a `serde_json::Value`, or a
 reference to your own struct.
@@ -251,15 +270,74 @@ One enum, `guideme::Error`, for everything:
 | `Auth` | 401 |
 | `Invalid { detail }` | 422, body included |
 | `RateLimited { retry_after }` | 429 after retries, or a `retry-after` too long to wait for |
-| `Overloaded` | 529 after retries |
+| `Overloaded { retry_after }` | 529, same |
 | `Transport(..)` | connection, TLS, timeout |
 | `UnexpectedStatus { status, body }` | anything the contract does not define |
 | `Protocol { detail }` | the response violates the contract: undecodable body, wrong answer kind, option or level not in the rubric, probability outside 0..1 |
 | `Unsure { question, value, threshold }` | the policy said unsure and nothing caught it |
-| `Config { detail }` | bad thresholds, missing key, empty batch, unserialisable state, empty or duplicate rubric |
+| `Config { detail }` | bad thresholds, missing key, empty batch, unserialisable state, empty or duplicate rubric, a setting that an injected client already carries |
 
-Retries on 429 and 529 use exponential backoff with jitter, capped at 30 s, and honour
-`retry-after`.
+Retries use exponential backoff with jitter, capped at 30 s, and honour `retry-after`. What is
+retried: 429, 529, and a request that never reached a server — a refused connection, a reset,
+a TLS handshake, a connect timeout. Both endpoints, so a throttle on a startup `models()` call
+does not fail the boot. What is not: a read timeout or a body failure, because the request did
+reach a server and resending would double the wall time `timeout` promises.
+
+## The receipt
+
+`ask` returns the answer. `ask_with_receipt` returns the same answer plus what the response
+said about itself: the versioned model that produced it, and the tokens it cost.
+
+```rust
+let receipt = guide.ask_with_receipt(choose::<Department>("Which team?"), ticket).await?;
+meter.record(receipt.usage.input_tokens, receipt.model.as_str()); // input tokens are billed
+route(receipt.answer);
+```
+
+Same request, same span, same fields. `ask` is this with everything but the answer dropped.
+
+## Testing your code
+
+Point the guide at a mock server and your control flow runs without a network or an API key.
+
+```rust
+use guideme::{noul, Guide};
+use wiremock::matchers::{method, path};
+use wiremock::{Mock, MockServer, ResponseTemplate};
+
+const URGENT: &str = r#"{
+  "model": "jev-1.13.0",
+  "answers": { "q0": { "type": "noul", "noul": 0.95 } },
+  "usage": { "input_tokens": 307, "output_tokens": 20 }
+}"#;
+
+#[tokio::test]
+async fn an_urgent_ticket_is_escalated() -> Result<(), Box<dyn std::error::Error>> {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/systemone"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(URGENT))
+        .mount(&server)
+        .await;
+
+    let guide = Guide::builder()
+        .api_key("test-key".into())
+        .base_url(server.uri())
+        .build()?;
+
+    assert!(guide.ask(noul("Should this be escalated?"), "payouts down").await?);
+    Ok(())
+}
+```
+
+Question ids are `q0..qN` in encounter order, so a batch answers `q0`, `q1` and so on in the
+order you wrote it. `server.received_requests()` is how you assert on what was sent.
+
+For a proxy, a client certificate, or a transport shared with the rest of the application,
+hand in the client instead: `api::Client::builder(key).http(reqwest_client).build()?`, then
+`Guide::builder().client(client)`. Everything the client carries — the key, the base URL, the
+retry budget, the backoff, the timeout — is refused by name if you also set it on the guide
+builder, so a setting never quietly does nothing.
 
 ## Lower layers
 
@@ -294,6 +372,14 @@ attribute names, so one dashboard reads both.
 | `TYPESAFE_API_KEY` | required by `Guide::from_env` |
 | `TYPESAFE_BASE_URL` | optional API origin override |
 | `GUIDEME_MODEL` | optional model or alias; default `jev-latest` |
+
+`Guide::from_env()?` is the one-liner. `Guide::builder().from_env()?` reads the same three
+variables onto a builder you are still configuring, so a house policy and an environment key
+compose: `Guide::builder().from_env()?.policy(CAUTIOUS).build()?`.
+
+The rest of the builder: `model`, `policy`, `max_retries` (default 3), `backoff` (default
+500 ms, the base of the exponential), `timeout` (default 30 s, per attempt), `record_state`,
+and `client` for an injected transport.
 
 ## Development
 
