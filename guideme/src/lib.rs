@@ -58,6 +58,9 @@
 //! # Ok(()) }
 //! ```
 
+// `spec` declares enums through this crate's own derives, which expand to `::guideme` paths.
+extern crate self as guideme;
+
 pub mod api;
 mod ask;
 mod error;

@@ -1,0 +1,65 @@
+[
+  {
+    "kind": "choice",
+    "what": "Payments, invoicing, refunds",
+    "examples": [],
+    "counterexamples": [],
+    "rendered": "Payments, invoicing, refunds"
+  },
+  {
+    "kind": "choice",
+    "what": "Bugs, outages, integrations",
+    "examples": [
+      "502 on every request"
+    ],
+    "counterexamples": [],
+    "rendered": "Bugs, outages, integrations\nExamples: 502 on every request"
+  },
+  {
+    "kind": "choice",
+    "what": "Payments, invoicing, refunds",
+    "examples": [
+      "My card was charged twice",
+      "Where is my refund?"
+    ],
+    "counterexamples": [],
+    "rendered": "Payments, invoicing, refunds\nExamples: My card was charged twice; Where is my refund?"
+  },
+  {
+    "kind": "choice",
+    "what": "Payments, invoicing, refunds",
+    "examples": [
+      "My card was charged twice"
+    ],
+    "counterexamples": [
+      "The dashboard is down"
+    ],
+    "rendered": "Payments, invoicing, refunds\nExamples: My card was charged twice\nNot this option: The dashboard is down"
+  },
+  {
+    "kind": "choice",
+    "what": "Payments, invoicing, refunds",
+    "examples": [],
+    "counterexamples": [
+      "The dashboard is down"
+    ],
+    "rendered": "Payments, invoicing, refunds\nNot this option: The dashboard is down"
+  },
+  {
+    "kind": "levels",
+    "what": "No impact to functionality",
+    "examples": [
+      "typo in a label",
+      "misaligned icon"
+    ],
+    "counterexamples": [],
+    "rendered": "No impact to functionality\nExamples: typo in a label; misaligned icon"
+  },
+  {
+    "kind": "levels",
+    "what": "No workaround exists",
+    "examples": [],
+    "counterexamples": [],
+    "rendered": "No workaround exists"
+  }
+]
