@@ -9,6 +9,9 @@
 use std::collections::BTreeMap;
 use std::time::Duration;
 
+// Through the crate's own re-export, not a dependency of this test: it is the path the README
+// tells callers to use, so this is what proves that path works.
+use guideme::api::reqwest;
 use guideme::{
     Choice, Guide, Key, Levels, Model, Policy, Rank, Scored, Usage, Verdict, choose, choose_among,
     noul, score, score_levels,

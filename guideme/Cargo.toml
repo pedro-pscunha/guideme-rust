@@ -25,9 +25,6 @@ tracing.workspace = true
 schemars.workspace = true
 
 [dev-dependencies]
-# Already a dependency of the library; listed again so the integration tests can build the
-# `reqwest::Client` that `api::ClientBuilder::http` takes. It adds nothing to the tree.
-reqwest.workspace = true
 proptest.workspace = true
 wiremock.workspace = true
 tracing-subscriber.workspace = true
