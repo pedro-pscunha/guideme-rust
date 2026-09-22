@@ -172,6 +172,21 @@ fn variants(input: &DeriveInput, derive: &str) -> Result<Vec<Variant>> {
                 ),
             ));
         }
+        // Items are joined onto one line, so a line break in one renders as a clause boundary
+        // the declaration never wrote. Checked here rather than in `push_item` so that a
+        // variant breaking this and the blank-rubric rule reports the blank one, matching the
+        // order `Rubric::render` produces: `push_item` runs while the attributes are still
+        // being read and cannot see a `rubric` set by a later one.
+        for (option, items) in [("example", &examples), ("counterexample", &counterexamples)] {
+            if let Some(item) = items.iter().find(|item| item.contains(['\n', '\r'])) {
+                return Err(Error::new_spanned(
+                    v,
+                    format!(
+                        "guideme: #[guide({option})] may not contain a line break (U+000A or U+000D): {item:?}"
+                    ),
+                ));
+            }
+        }
         out.push(Variant {
             ident: v.ident.clone(),
             key,

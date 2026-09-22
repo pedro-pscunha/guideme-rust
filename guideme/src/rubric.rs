@@ -119,13 +119,22 @@ pub(crate) fn render_pair(yes: &Rubric, no: &Rubric) -> Result<(String, String),
     Ok((yes.render()?, no.render()?))
 }
 
-/// Reject an empty entry or a repeat within one clause. Whitespace-only counts as empty, and
-/// duplicate detection is exact: `"a"` and `" a"` are two different examples.
+/// Reject an empty entry, a line break, or a repeat within one clause. Whitespace-only counts
+/// as empty; duplicate detection is exact, so `"a"` and `" a"` are two different examples. The
+/// line-break check is `contains` over `U+000A` and `U+000D`, never a line-splitting primitive:
+/// those cover different sets in different languages and would make two SDKs disagree.
 fn check_clause(items: &[String], kind: &str) -> Result<(), Error> {
     for (i, item) in items.iter().enumerate() {
         if item.trim().is_empty() {
             return Err(Error::Config {
                 detail: format!("an {kind} must not be empty"),
+            });
+        }
+        if item.contains(['\n', '\r']) {
+            return Err(Error::Config {
+                detail: format!(
+                    "an {kind} may not contain a line break (U+000A or U+000D): {item:?}"
+                ),
             });
         }
         if items[..i].contains(item) {
