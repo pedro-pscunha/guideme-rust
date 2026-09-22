@@ -236,7 +236,8 @@ The SDKs, so the announcement has addresses:
 |---|---|
 | Rust | this repository |
 | Python | [`pedro-pscunha/guideme-python`](https://github.com/pedro-pscunha/guideme-python) |
+| TypeScript | [`pedro-pscunha/guideme-typescript`](https://github.com/pedro-pscunha/guideme-typescript) |
 
-That repository vendors `spec/` and records the commit it came from in its `spec/SOURCE`; a
-job there fails when its copy drifts from this repository's `main`. So a contract change
-lands here first, and the drift job is what tells the other SDK to catch up.
+Each of those repositories vendors `spec/` and records the commit it came from in its
+`spec/SOURCE`; a job there fails when its copy drifts from this repository's `main`. So a
+contract change lands here first, and the drift jobs are what tell the other SDKs to catch up.
