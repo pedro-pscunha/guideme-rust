@@ -27,8 +27,11 @@ pub enum Error {
         /// The last `retry-after` the API sent, if any.
         retry_after: Option<Duration>,
     },
-    /// Connection, TLS, timeout, or body-read failure. A failure to connect is retried inside
-    /// the same budget as a throttle; a read timeout and a body failure are not.
+    /// Connection, TLS, timeout, or body-read failure. A failure to connect — refused, reset,
+    /// or a TLS handshake — is retried inside the same budget as a throttle. A timeout of any
+    /// phase and a body failure are not: the client sets one deadline over the whole attempt,
+    /// so a connect-phase timeout cannot be told apart from a read timeout, and retrying
+    /// either would multiply the wall time that deadline promises.
     #[error("transport failure: {0}")]
     Transport(#[source] Box<dyn std::error::Error + Send + Sync>),
     /// A status the API contract does not define.

@@ -106,12 +106,12 @@ Emitted at `WARN` inside the failed attempt's span, just before the wait.
 
 **Exactly one of `http.response.status_code` and `error.type` is present on every retry
 event.** A response that was throttled carries its status; an attempt that never reached a
-server — a refused connection, a reset, a TLS handshake, a connect timeout — has no status to
-report and carries `error.type = "transport"` instead. Those are retried inside the same
-budget and with the same backoff, because the request went nowhere. A read timeout and a body
-failure are not retried: the request did reach a server. The attempt's own span is marked
-failed with `error.type = "transport"` either way, as it already was for a transport failure
-that was not retried.
+server — a refused or reset connection, a TLS handshake failure — has no status to report and
+carries `error.type = "transport"` instead. Those are retried inside the same budget and with
+the same backoff, because the request went nowhere. A timeout of any phase and a body failure
+are not retried, so they never produce a retry event: they mark the attempt's span and are
+returned. The attempt's own span is marked failed with `error.type = "transport"` either way,
+as it already was for a transport failure that was not retried.
 
 The message is `429 from TypeSafe, retrying in 1000 ms`, or `could not reach TypeSafe,
 retrying in 500 ms`.

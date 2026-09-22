@@ -50,10 +50,14 @@
   `POST /v1/systemone`. It was not retried at all, so a throttle on a startup `models()` call
   failed the boot — which the API docs say the SDKs handle. Both endpoints now drive one retry
   loop.
-- A failure to connect is retried inside the same budget: a refused connection, a reset, a TLS
-  handshake, a connect timeout. The request never reached a server, so sending it again is
-  safe. A read timeout and a body failure are still not retried — those reached a server, and
-  resending would double the wall time `timeout` promises.
+- A failure to connect is retried inside the same budget: a refused or reset connection, a TLS
+  handshake failure. The request never reached a server, so sending it again is safe. A
+  **timeout of any phase** and a body failure are still not retried. `timeout` is one deadline
+  over the whole attempt, so a connect-phase timeout is indistinguishable from a read timeout —
+  `reqwest` reports both as `is_timeout()`, not `is_connect()` — and retrying either would
+  multiply the wall time that setting promises. With a client handed in through `http(..)` the
+  classification is `reqwest`'s over that client, so a `connect_timeout` set there makes connect
+  timeouts retryable; guideme never sets one.
 - The `guideme.retry` event carries `error.type = "transport"` and **no**
   `http.response.status_code` when the attempt failed before a response. Exactly one of the two
   is on every retry event. This is a telemetry contract change; `docs/observability.md` has the

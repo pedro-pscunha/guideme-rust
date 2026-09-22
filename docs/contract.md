@@ -175,10 +175,14 @@ Mirror the verbs, in the idiom of the language:
   with the same three fields;
 - a retry policy: `429` and `529` are retried with exponential backoff honouring an integer
   `retry-after`, on both `POST /v1/systemone` and `GET /v1/models`; a connection failure — the
-  request never reached a server, so a refused connection, a reset, a TLS handshake or a
-  connect timeout — is retried in the same budget; a read timeout or a body failure is not.
-  After the last retry, `429` is a rate-limited error and `529` an overloaded error, each
-  carrying the `retry-after` the API last sent;
+  request never reached a server, so a refused or reset connection or a TLS handshake failure —
+  is retried in the same budget; **a timeout of any phase** (connect, read, write) and a body
+  failure are not. The reason is stated rather than left to each SDK: Rust sets one overall
+  deadline per attempt, under which a connect-phase timeout is indistinguishable from a read
+  timeout — `reqwest` classifies it as `is_timeout()`, not `is_connect()` — and a retried
+  timeout multiplies the wall time the builder promises; Python matches by not retrying
+  `httpx.ConnectTimeout` either. After the last retry, `429` is a rate-limited error and `529`
+  an overloaded error, each carrying the `retry-after` the API last sent;
 - telemetry with the names in `docs/observability.md`: one `guideme.ask` span per `ask` with
   the `gen_ai.*` attributes, one HTTP client span per attempt, one `guideme.answer` event per
   answer, and `error.type` from the same list of names. The names are the contract so that

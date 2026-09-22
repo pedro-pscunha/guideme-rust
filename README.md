@@ -278,10 +278,15 @@ One enum, `guideme::Error`, for everything:
 | `Config { detail }` | bad thresholds, missing key, empty batch, unserialisable state, empty or duplicate rubric, a setting that an injected client already carries |
 
 Retries use exponential backoff with jitter, capped at 30 s, and honour `retry-after`. What is
-retried: 429, 529, and a request that never reached a server — a refused connection, a reset,
-a TLS handshake, a connect timeout. Both endpoints, so a throttle on a startup `models()` call
-does not fail the boot. What is not: a read timeout or a body failure, because the request did
-reach a server and resending would double the wall time `timeout` promises.
+retried: 429, 529, and a request that never reached a server — a refused or reset connection, a
+TLS handshake failure. Both endpoints, so a throttle on a startup `models()` call does not fail
+the boot. What is not: **a timeout of any phase**, or a body failure. `timeout` is one deadline
+over the whole attempt, so a connect-phase timeout cannot be told apart from a read timeout,
+and retrying either would multiply the wall time that setting promises.
+
+Hand in your own client with `http(..)` and the classification is that client's: guideme still
+retries what `reqwest` reports as a connection failure, so a `connect_timeout` set on your
+client makes connect timeouts retryable. guideme never sets one.
 
 ## The receipt
 

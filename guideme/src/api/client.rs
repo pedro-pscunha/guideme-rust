@@ -137,10 +137,14 @@ impl Client {
     /// metadata, so each endpoint writes its own — and `new_request` builds the request again,
     /// because sending one consumes it.
     ///
-    /// Retried: `429`, `529`, and a failure to connect — refused, reset, a TLS handshake, a
-    /// connect timeout. Not retried: a read timeout or a body failure. Those mean the request
-    /// reached a server, so resending would double the wall time the timeout promises without
-    /// knowing the first attempt did nothing.
+    /// Retried: `429`, `529`, and whatever `reqwest` reports as a failure to connect —
+    /// refused, reset, a TLS handshake. Not retried: a timeout of any phase, or a body
+    /// failure. [`ClientBuilder`] sets one overall deadline per attempt and never a
+    /// `connect_timeout`, under which `reqwest` classifies a connect-phase timeout as
+    /// `is_timeout()` rather than `is_connect()` — so no timeout is retryable here, and
+    /// retrying one would multiply the wall time that deadline promises. A client handed in
+    /// through [`ClientBuilder::http`] brings its own classification: a `connect_timeout` set
+    /// on it does make connect timeouts retryable.
     async fn retrying<T, S, B>(&self, new_span: S, new_request: B) -> Result<T, Error>
     where
         T: serde::de::DeserializeOwned,
