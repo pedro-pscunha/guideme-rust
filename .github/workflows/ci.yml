@@ -39,7 +39,7 @@ jobs:
 
       # mise.toml is the single source of truth for cargo-nextest and cargo-deny.
       # Nothing is re-pinned here.
-      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+      - uses: jdx/mise-action@9b200bcecbfd6303e69a4a261b2e09e3757440a7 # v5.2.0
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
@@ -65,7 +65,7 @@ jobs:
           fetch-depth: 0
 
       # gitleaks' version comes from mise.toml, same as the hooks use.
-      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+      - uses: jdx/mise-action@9b200bcecbfd6303e69a4a261b2e09e3757440a7 # v5.2.0
 
       # Exit 2 is a leak, exit 1 is gitleaks failing to run. Both fail the job.
       - name: gitleaks over the full history
